@@ -92,6 +92,19 @@ node server.js
 | POST | `/webhook/xrocket` | Webhook xRocket об оплате счёта (проверка подписи) |
 | POST | `/webhook/pgon` · `/webhook/nicepay` · `/webhook/rukassa` | Вебхуки шлюзов (`?secret=WEBHOOK_SECRET`, сверка суммы) |
 
+## Telegram-бот (команды)
+
+| Команда | Описание |
+|---|---|
+| `/start`, `/app` | Открыть Mini App, установить кнопку меню |
+| `/deal <ID>` | Проверить состояние сделки по ID |
+| `/support` | Задать вопрос — следующее сообщение пересылается гарантам |
+| `/admin` | Сводка для ID из `ADMIN_IDS` |
+
+Бот работает в режиме long-polling и не требует публичного URL.  
+Когда пользователь впервые обращается к боту, его `chat_id` сохраняется в `backend/user_chats.json`.
+Это позволяет доставлять уведомления обеим сторонам сделки при изменении статуса.
+
 Защищённые `/api/*`-запросы требуют заголовок `X-Telegram-Init-Data` (Mini App) или `X-Auth-Token` (после входа через Login Widget).
 
 ## Важно

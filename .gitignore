@@ -1,3 +1,4 @@
 node_modules/
 backend/.env
 backend/deals.json
+backend/user_chats.json
