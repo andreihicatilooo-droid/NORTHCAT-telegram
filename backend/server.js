@@ -17,7 +17,86 @@ const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 
-const BOT_TOKEN = process.env.BOT_TOKEN || "";
+loadEnvFiles([
+  path.join(__dirname, ".env"),
+  path.join(__dirname, "..", ".env")
+]);
+
+function loadEnvFiles(files) {
+  for (const file of files) {
+    try {
+      applyEnvFile(fs.readFileSync(file, "utf8"));
+    } catch (e) {
+      // файл не обязателен
+    }
+  }
+}
+
+function applyEnvFile(text) {
+  for (const rawLine of text.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#")) continue;
+    const eq = line.indexOf("=");
+    if (eq <= 0) continue;
+
+    const key = line.slice(0, eq).trim();
+    let value = line.slice(eq + 1).trim();
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+    if (!value || value === "replace-me" || /^123456:ABC-DEF/.test(value)) {
+      continue;
+    }
+    if (!process.env[key]) process.env[key] = value;
+  }
+}
+
+function normalizedSecret(value) {
+  const v = String(value || "").trim();
+  if (!v || v === "replace-me" || /^123456:ABC-DEF/.test(v)) return "";
+  return v;
+}
+
+const RUNTIME_SETTINGS_FILE = path.join(__dirname, "runtime_settings.json");
+const DEFAULT_BOT_TOKEN = normalizedSecret(process.env.BOT_TOKEN);
+
+let runtimeSettings = {
+  botToken: DEFAULT_BOT_TOKEN,
+  updatedAt: DEFAULT_BOT_TOKEN ? Date.now() : 0
+};
+
+try {
+  const storedRuntime = JSON.parse(fs.readFileSync(RUNTIME_SETTINGS_FILE, "utf8"));
+  const storedBotToken = normalizedSecret(storedRuntime && storedRuntime.botToken);
+  if (storedBotToken) {
+    runtimeSettings = {
+      botToken: storedBotToken,
+      updatedAt: Number.isFinite(Number(storedRuntime.updatedAt)) ? Number(storedRuntime.updatedAt) : Date.now()
+    };
+  }
+} catch (e) {
+  // ignore missing runtime settings
+}
+
+function persistRuntimeSettings() {
+  try {
+    if (!runtimeSettings.botToken) {
+      if (fs.existsSync(RUNTIME_SETTINGS_FILE)) fs.unlinkSync(RUNTIME_SETTINGS_FILE);
+      return;
+    }
+    fs.writeFileSync(RUNTIME_SETTINGS_FILE, JSON.stringify(runtimeSettings, null, 2));
+  } catch (e) {
+    console.error("[admin] Не удалось сохранить runtime_settings:", e.message);
+  }
+}
+
+function getBotToken() {
+  return runtimeSettings.botToken || "";
+}
+
 const XROCKET_API_KEY = process.env.XROCKET_API_KEY || "";
 const XROCKET_API_URL = (process.env.XROCKET_API_URL || "https://pay.xrocket.tg").replace(/\/+$/, "");
 const PUBLIC_URL = (process.env.PUBLIC_URL || "").replace(/\/+$/, "");
@@ -34,14 +113,16 @@ const RUKASSA_TOKEN = process.env.RUKASSA_TOKEN || "";
 
 // Секрет, который добавляется query-параметром к URL вебхуков шлюзов
 // (укажите его при настройке webhook в кабинете шлюза: /webhook/rukassa?secret=...)
-const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || "";
+const WEBHOOK_SECRET = normalizedSecret(process.env.WEBHOOK_SECRET);
 
 const ADMIN_IDS = (process.env.ADMIN_IDS || "")
   .split(",")
   .map((s) => parseInt(s.trim(), 10))
   .filter(Boolean);
+const ADMIN_GROUP_ID = parseInt(process.env.ADMIN_GROUP_ID || "", 10);
 
 const DB_FILE = path.join(__dirname, "deals.json");
+const ADMIN_GROUP_FILE = path.join(__dirname, "admin_group.json");
 
 /* ---------- Хранилище ---------- */
 
@@ -69,6 +150,73 @@ function formatAmount(amount, currency) {
   const normalized = dealAmount(amount);
   if (!Number.isFinite(normalized)) return `— ${currency || ""}`.trim();
   return `${normalized.toLocaleString("ru-RU")} ${currency || ""}`.trim();
+}
+
+function normalizeChatId(value) {
+  return Number.isInteger(value) && value !== 0 ? value : null;
+}
+
+let adminGroup = {
+  chatId: normalizeChatId(ADMIN_GROUP_ID),
+  title: "",
+  type: "group",
+  setBy: null,
+  updatedAt: ADMIN_GROUP_ID ? Date.now() : 0
+};
+
+try {
+  const stored = JSON.parse(fs.readFileSync(ADMIN_GROUP_FILE, "utf8"));
+  if (stored && normalizeChatId(Number(stored.chatId))) {
+    adminGroup = {
+      chatId: Number(stored.chatId),
+      title: String(stored.title || ""),
+      type: stored.type === "supergroup" ? "supergroup" : "group",
+      setBy: Number.isFinite(Number(stored.setBy)) ? Number(stored.setBy) : null,
+      updatedAt: Number.isFinite(Number(stored.updatedAt)) ? Number(stored.updatedAt) : Date.now()
+    };
+  }
+} catch (e) {
+  // ignore missing file
+}
+
+function persistAdminGroup() {
+  try {
+    if (!adminGroup.chatId) {
+      if (fs.existsSync(ADMIN_GROUP_FILE)) fs.unlinkSync(ADMIN_GROUP_FILE);
+      return;
+    }
+    fs.writeFileSync(ADMIN_GROUP_FILE, JSON.stringify(adminGroup, null, 2));
+  } catch (e) {
+    console.error("[bot] Не удалось сохранить admin_group:", e.message);
+  }
+}
+
+function registerAdminGroup(chat, actorId) {
+  if (!chat || (chat.type !== "group" && chat.type !== "supergroup")) return false;
+  const nextId = normalizeChatId(Number(chat.id));
+  if (!nextId) return false;
+  adminGroup = {
+    chatId: nextId,
+    title: String(chat.title || "Админ-группа").slice(0, 128),
+    type: chat.type,
+    setBy: Number.isFinite(Number(actorId)) ? Number(actorId) : null,
+    updatedAt: Date.now()
+  };
+  persistAdminGroup();
+  return true;
+}
+
+function clearAdminGroup(chatId) {
+  if (!adminGroup.chatId || Number(adminGroup.chatId) !== Number(chatId)) return false;
+  adminGroup = { chatId: null, title: "", type: "group", setBy: null, updatedAt: Date.now() };
+  persistAdminGroup();
+  return true;
+}
+
+function adminGroupLabel() {
+  if (!adminGroup.chatId) return "не привязана";
+  const title = adminGroup.title || "Админ-группа";
+  return `${title} (${adminGroup.chatId})`;
 }
 
 /* ---------- Хранилище chat_id пользователей ---------- */
@@ -105,7 +253,8 @@ function registerUser(from, chatId) {
 
 // Mini App: проверка подписи initData
 function validateInitData(initData) {
-  if (!initData || !BOT_TOKEN) return null;
+  const botToken = getBotToken();
+  if (!initData || !botToken) return null;
   const params = new URLSearchParams(initData);
   const hash = params.get("hash");
   if (!hash) return null;
@@ -116,7 +265,7 @@ function validateInitData(initData) {
     .sort()
     .join("\n");
 
-  const secretKey = crypto.createHmac("sha256", "WebAppData").update(BOT_TOKEN).digest();
+  const secretKey = crypto.createHmac("sha256", "WebAppData").update(botToken).digest();
   const expected = crypto.createHmac("sha256", secretKey).update(dataCheckString).digest("hex");
   if (expected !== hash) return null;
 
@@ -130,13 +279,14 @@ function validateInitData(initData) {
 // Login Widget: проверка подписи полей виджета
 // https://core.telegram.org/widgets/login#checking-authorization
 function validateWidgetAuth(data) {
-  if (!data || !data.hash || !BOT_TOKEN) return null;
+  const botToken = getBotToken();
+  if (!data || !data.hash || !botToken) return null;
   const { hash, ...fields } = data;
   const dataCheckString = Object.keys(fields)
     .sort()
     .map((k) => `${k}=${fields[k]}`)
     .join("\n");
-  const secretKey = crypto.createHash("sha256").update(BOT_TOKEN).digest();
+  const secretKey = crypto.createHash("sha256").update(botToken).digest();
   const expected = crypto.createHmac("sha256", secretKey).update(dataCheckString).digest("hex");
   if (expected !== hash) return null;
   // Данные не старше суток
@@ -146,6 +296,7 @@ function validateWidgetAuth(data) {
 
 // Токен сессии: base64url(payload).hmac
 function issueToken(user) {
+  const botToken = getBotToken();
   const payload = Buffer.from(JSON.stringify({
     id: user.id,
     first_name: user.first_name,
@@ -154,15 +305,16 @@ function issueToken(user) {
     photo_url: user.photo_url,
     exp: Date.now() + 30 * 24 * 3600 * 1000
   })).toString("base64url");
-  const sig = crypto.createHmac("sha256", BOT_TOKEN).update(payload).digest("base64url");
+  const sig = crypto.createHmac("sha256", botToken).update(payload).digest("base64url");
   return payload + "." + sig;
 }
 
 function validateToken(token) {
-  if (!token || !BOT_TOKEN) return null;
+  const botToken = getBotToken();
+  if (!token || !botToken) return null;
   const [payload, sig] = token.split(".");
   if (!payload || !sig) return null;
-  const expected = crypto.createHmac("sha256", BOT_TOKEN).update(payload).digest("base64url");
+  const expected = crypto.createHmac("sha256", botToken).update(payload).digest("base64url");
   if (expected.length !== sig.length ||
       !crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(sig))) return null;
   try {
@@ -345,8 +497,25 @@ async function notifyParties(deal, text) {
   }
 }
 
+function groupLinkButton(text) {
+  if (!PUBLIC_URL) return undefined;
+  return { inline_keyboard: [[{ text, url: PUBLIC_URL + "/?admin=1" }]] };
+}
+
+async function notifyAdminGroup(text) {
+  if (!adminGroup.chatId) return false;
+  const res = await tgCall("sendMessage", {
+    chat_id: adminGroup.chatId,
+    text,
+    parse_mode: "HTML",
+    reply_markup: groupLinkButton("Открыть сервис")
+  }).catch(() => ({ ok: false }));
+  return !!(res && res.ok);
+}
+
 // Оповестить всех гарантов/арбитров
 async function notifyAdmins(text) {
+  if (await notifyAdminGroup(text)) return;
   for (const adminId of ADMIN_IDS) {
     await tgCall("sendMessage", {
       chat_id: adminId,
@@ -359,6 +528,8 @@ async function notifyAdmins(text) {
 
 /* ---------- HTTP API ---------- */
 
+let BOT_INFO = null;
+let botLoopStarted = false;
 const app = express();
 
 // Сырое тело нужно для проверки подписи webhook xRocket
@@ -383,6 +554,24 @@ app.get("/api/health", (req, res) => {
 app.get("/api/me", auth, (req, res) => {
   res.json({ user: req.tgUser, isAdmin: ADMIN_IDS.includes(req.tgUser.id) });
 });
+
+function isLocalRequest(req) {
+  const ip = String(req.ip || req.connection.remoteAddress || "");
+  return ip === "::1" || ip === "127.0.0.1" || ip === "::ffff:127.0.0.1";
+}
+
+function adminRuntimeAccess(req, res, next) {
+  if (!getBotToken() && isLocalRequest(req)) {
+    req.tgUser = { id: 0, first_name: "Local Admin", username: "local_admin" };
+    return next();
+  }
+  return auth(req, res, function authDone() {
+    if (!ADMIN_IDS.includes(req.tgUser.id)) {
+      return res.status(403).json({ error: "Только для гаранта" });
+    }
+    next();
+  });
+}
 
 // Вход через Telegram Login Widget
 app.post("/api/auth/telegram", (req, res) => {
@@ -434,6 +623,8 @@ app.post("/api/deals", auth, (req, res) => {
   const deal = {
     id: "CRB-" + Date.now().toString(36).toUpperCase() + crypto.randomBytes(2).toString("hex").toUpperCase(),
     ownerId: req.tgUser.id,
+    ownerUsername: req.tgUser.username ? String(req.tgUser.username).replace(/^@+/, "") : "",
+    ownerName: [req.tgUser.first_name, req.tgUser.last_name].filter(Boolean).join(" ").slice(0, 120),
     role: b.role === "buyer" ? "buyer" : "seller",
     counterparty: String(b.counterparty).slice(0, 64),
     counterpartyId,
@@ -552,9 +743,248 @@ function adminOnly(req, res, next) {
   next();
 }
 
+function maskSecret(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "не задан";
+  if (raw.length <= 10) return "••••••";
+  return raw.slice(0, 6) + "••••••" + raw.slice(-4);
+}
+
+function userLabelFromParts(name, username, fallbackId) {
+  if (name) return username ? `${name} (@${username})` : name;
+  if (username) return `@${username}`;
+  return `ID ${fallbackId}`;
+}
+
+function collectUserStats() {
+  const users = new Map();
+
+  function ensureUser(key, seed) {
+    if (!users.has(key)) {
+      users.set(key, {
+        key,
+        id: seed.id || null,
+        username: seed.username || "",
+        label: seed.label || (seed.id ? `ID ${seed.id}` : "Неизвестный"),
+        totalDeals: 0,
+        sellerDeals: 0,
+        buyerDeals: 0,
+        activeDeals: 0,
+        completedDeals: 0,
+        disputeDeals: 0,
+        completedTurnover: 0,
+        lastDealAt: 0
+      });
+    }
+    return users.get(key);
+  }
+
+  function applyDeal(user, role, deal) {
+    user.totalDeals += 1;
+    if (role === "seller") user.sellerDeals += 1;
+    if (role === "buyer") user.buyerDeals += 1;
+    if (["new", "paid", "fulfilled"].includes(deal.status)) user.activeDeals += 1;
+    if (deal.status === "completed") {
+      user.completedDeals += 1;
+      user.completedTurnover += Number(deal.amount) || 0;
+    }
+    if (deal.status === "dispute") user.disputeDeals += 1;
+    user.lastDealAt = Math.max(user.lastDealAt || 0, Number(deal.createdAt) || 0);
+  }
+
+  for (const deal of deals) {
+    const ownerUsername = String(deal.ownerUsername || "").replace(/^@+/, "");
+    const ownerKey = `owner:${deal.ownerId}`;
+    const owner = ensureUser(ownerKey, {
+      id: deal.ownerId,
+      username: ownerUsername,
+      label: userLabelFromParts(deal.ownerName, ownerUsername, deal.ownerId)
+    });
+    applyDeal(owner, deal.role, deal);
+
+    const counterpartyUsername = String(deal.counterparty || "").trim().replace(/^@+/, "");
+    const counterpartyKey = deal.counterpartyId
+      ? `user:${deal.counterpartyId}`
+      : `handle:${String(deal.counterparty || "").trim().toLowerCase()}`;
+    const counterparty = ensureUser(counterpartyKey, {
+      id: deal.counterpartyId || null,
+      username: counterpartyUsername,
+      label: String(deal.counterparty || (deal.counterpartyId ? `ID ${deal.counterpartyId}` : "Контрагент")).slice(0, 120)
+    });
+    applyDeal(counterparty, deal.role === "seller" ? "buyer" : "seller", deal);
+  }
+
+  const list = Array.from(users.values()).sort((a, b) =>
+    (b.totalDeals - a.totalDeals) ||
+    (b.completedTurnover - a.completedTurnover) ||
+    (b.lastDealAt - a.lastDealAt)
+  );
+
+  return {
+    summary: {
+      totalUsers: list.length,
+      activeUsers: list.filter((u) => u.activeDeals > 0).length,
+      disputedUsers: list.filter((u) => u.disputeDeals > 0).length,
+      completedUsers: list.filter((u) => u.completedDeals > 0).length
+    },
+    users: list
+  };
+}
+
+function searchService(query) {
+  const q = String(query || "").trim().toLowerCase();
+  if (!q) {
+    return { query: "", counts: { deals: 0, users: 0 }, deals: [], users: [] };
+  }
+
+  const userStats = collectUserStats();
+  const dealResults = deals.filter((deal) => {
+    const haystack = [
+      deal.id,
+      deal.title,
+      deal.terms,
+      deal.counterparty,
+      deal.ownerName,
+      deal.ownerUsername,
+      deal.method,
+      deal.status,
+      String(deal.ownerId || ""),
+      String(deal.counterpartyId || "")
+    ].join(" ").toLowerCase();
+    return haystack.includes(q);
+  }).slice(0, 12).map((deal) => ({
+    type: "deal",
+    id: deal.id,
+    title: deal.title,
+    counterparty: deal.counterparty,
+    status: deal.status,
+    amount: deal.amount,
+    currency: deal.currency,
+    method: deal.method,
+    createdAt: deal.createdAt
+  }));
+
+  const userResults = userStats.users.filter((entry) => {
+    const haystack = [entry.label, entry.username, entry.id, entry.key].join(" ").toLowerCase();
+    return haystack.includes(q);
+  }).slice(0, 12).map((entry) => ({
+    type: "user",
+    key: entry.key,
+    label: entry.label,
+    username: entry.username,
+    totalDeals: entry.totalDeals,
+    completedDeals: entry.completedDeals,
+    disputeDeals: entry.disputeDeals,
+    completedTurnover: entry.completedTurnover
+  }));
+
+  return {
+    query: q,
+    counts: { deals: dealResults.length, users: userResults.length },
+    deals: dealResults,
+    users: userResults
+  };
+}
+
+async function tgCallWithToken(botToken, method, payload) {
+  const token = normalizedSecret(botToken);
+  if (!token) return { ok: false, description: "BOT_TOKEN не задан" };
+  try {
+    const res = await fetch("https://api.telegram.org/bot" + token + "/" + method, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload || {})
+    });
+    return await res.json();
+  } catch (e) {
+    console.error(`[bot] ${method}:`, e.message);
+    return { ok: false, description: e.message };
+  }
+}
+
+async function getRuntimeSnapshot() {
+  let botInfo = BOT_INFO;
+  const botToken = getBotToken();
+  if (botToken && (!botInfo || !botInfo.username)) {
+    const me = await tgCallWithToken(botToken, "getMe");
+    if (me && me.ok) {
+      botInfo = me.result;
+      BOT_INFO = botInfo;
+    }
+  }
+
+  return {
+    botTokenConfigured: !!botToken,
+    botTokenMasked: maskSecret(botToken),
+    bot: botInfo ? {
+      id: botInfo.id,
+      username: botInfo.username,
+      first_name: botInfo.first_name,
+      can_join_groups: !!botInfo.can_join_groups
+    } : null,
+    adminGroup: {
+      chatId: adminGroup.chatId,
+      title: adminGroup.title || "",
+      label: adminGroupLabel(),
+      type: adminGroup.type,
+      updatedAt: adminGroup.updatedAt || 0
+    },
+    updatedAt: runtimeSettings.updatedAt || 0
+  };
+}
+
+async function ensureBotRuntime() {
+  if (!getBotToken()) return;
+  BOT_INFO = null;
+  await setupBot();
+  if (!botLoopStarted) {
+    botLoopStarted = true;
+    botLoop().catch((e) => console.error("[bot] loop:", e.message));
+  }
+}
+
 // Админ: все сделки сервиса
 app.get("/api/admin/deals", auth, adminOnly, (req, res) => {
   res.json(deals);
+});
+
+app.get("/api/admin/users", auth, adminOnly, (req, res) => {
+  res.json(collectUserStats());
+});
+
+app.get("/api/admin/search", auth, adminOnly, (req, res) => {
+  res.json(searchService(req.query && req.query.q));
+});
+
+app.get("/api/admin/runtime", adminRuntimeAccess, async (req, res) => {
+  res.json(await getRuntimeSnapshot());
+});
+
+app.post("/api/admin/runtime", adminRuntimeAccess, async (req, res) => {
+  const nextToken = normalizedSecret(req.body && req.body.botToken);
+  if (!nextToken) {
+    return res.status(400).json({ error: "Укажите корректный BOT_TOKEN" });
+  }
+
+  const me = await tgCallWithToken(nextToken, "getMe");
+  if (!me || !me.ok || !me.result) {
+    return res.status(400).json({ error: "Telegram отклонил BOT_TOKEN. Проверьте токен и повторите попытку." });
+  }
+
+  runtimeSettings = {
+    botToken: nextToken,
+    updatedAt: Date.now()
+  };
+  persistRuntimeSettings();
+  BOT_INFO = me.result;
+
+  try {
+    await ensureBotRuntime();
+  } catch (e) {
+    console.error("[admin] setup bot runtime:", e.message);
+  }
+
+  res.json(await getRuntimeSnapshot());
 });
 
 // Админ: решение спора — "seller" (выплата продавцу) или "buyer" (возврат покупателю)
@@ -658,20 +1088,8 @@ app.post("/webhook/rukassa", gatewayWebhook("rukassa"));
 
 /* ---------- Telegram-бот ---------- */
 
-const TG_API = "https://api.telegram.org/bot" + BOT_TOKEN;
-
 async function tgCall(method, payload) {
-  try {
-    const res = await fetch(TG_API + "/" + method, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload || {})
-    });
-    return await res.json();
-  } catch (e) {
-    console.error(`[bot] ${method}:`, e.message);
-    return { ok: false };
-  }
+  return tgCallWithToken(getBotToken(), method, payload);
 }
 
 function appButton(text) {
@@ -742,6 +1160,9 @@ function createDealFromTemplate(template, buyer) {
 
 // Разовая настройка бота: описание, команды, админ-команды
 async function setupBot() {
+  const me = await tgCall("getMe");
+  if (me && me.ok) BOT_INFO = me.result;
+
   await tgCall("setMyShortDescription", {
     short_description: "CRB GA — гарант безопасных сделок. Escrow, споры, арбитраж."
   });
@@ -757,7 +1178,6 @@ async function setupBot() {
       { command: "start", description: "Открыть CRB GA" },
       { command: "app", description: "Кнопка запуска приложения" },
       { command: "post", description: "Пост с кнопками на шаблоны сделок" },
-    { command: "post", description: "Пост с кнопками на шаблоны сделок" },
       { command: "deal", description: "Проверить сделку: /deal ID" },
       { command: "support", description: "Поддержка" }
     ]
@@ -770,6 +1190,7 @@ async function setupBot() {
         { command: "app", description: "Кнопка запуска приложения" },
         { command: "post", description: "Пост с кнопками на шаблоны сделок" },
         { command: "admin", description: "Админ-меню гаранта" },
+        { command: "group", description: "Привязать текущую группу как админскую" },
         { command: "deal", description: "Проверить сделку: /deal ID" },
         { command: "support", description: "Поддержка" }
       ]
@@ -902,7 +1323,132 @@ function formatUserLabel(from) {
     (from.username ? ` (@${from.username})` : "") + ` [${from.id}]`;
 }
 
+async function sendDealSummary(chatId, deal, viewer, useAppButton) {
+  const stLabels = {
+    new: "Ожидает оплаты", paid: "В гаранте (оплачена)", fulfilled: "Исполнена",
+    completed: "Завершена", dispute: "Спор", cancelled: "Отменена"
+  };
+  const isOwner = deal.ownerId === viewer.id;
+  const viewerRole = isOwner ? deal.role : (deal.role === "seller" ? "buyer" : "seller");
+  const sellerLabel = viewerRole === "seller" ? "вы" : deal.counterparty;
+  const buyerLabel = viewerRole === "buyer" ? "вы" : deal.counterparty;
+  await tgCall("sendMessage", {
+    chat_id: chatId,
+    text:
+      `🔖 <b>Сделка ${deal.id}</b>\n` +
+      `📌 ${deal.title}\n\n` +
+      `Статус: <b>${stLabels[deal.status] || deal.status}</b>\n` +
+      `Сумма: ${deal.amount} ${deal.currency}\n` +
+      `К оплате: ${deal.total} ${deal.currency} (комиссия ${deal.feePercent}%)\n` +
+      `Продавец: ${sellerLabel}\n` +
+      `Покупатель: ${buyerLabel}`,
+    parse_mode: "HTML",
+    reply_markup: useAppButton ? appButton("Открыть в приложении") : groupLinkButton("Открыть сервис")
+  });
+}
+
+async function handleGroupMessage(msg) {
+  const chat = msg.chat;
+  if (!chat || (chat.type !== "group" && chat.type !== "supergroup")) return;
+
+  const cmd = msg.text ? msg.text.trim().split(/[\s@]/)[0] : "";
+  const isAdmin = !!(msg.from && ADMIN_IDS.includes(msg.from.id));
+  const botAdded = !!(
+    BOT_INFO &&
+    Array.isArray(msg.new_chat_members) &&
+    msg.new_chat_members.some((member) => member.id === BOT_INFO.id)
+  );
+  const botRemoved = !!(
+    BOT_INFO &&
+    msg.left_chat_member &&
+    msg.left_chat_member.id === BOT_INFO.id
+  );
+
+  if (botRemoved) {
+    clearAdminGroup(chat.id);
+    return;
+  }
+
+  if (botAdded) {
+    if (isAdmin && registerAdminGroup(chat, msg.from.id)) {
+      await tgCall("sendMessage", {
+        chat_id: chat.id,
+        text:
+          `✅ Группа «${chat.title || "Админ-группа"}» привязана как основная админ-группа.\n` +
+          `Теперь оповещения по спорам, поддержке и ручным проверкам будут приходить сюда.`,
+        reply_markup: groupLinkButton("Открыть сервис")
+      });
+    } else {
+      await tgCall("sendMessage", {
+        chat_id: chat.id,
+        text:
+          "Я добавлен в группу, но привязать её может только Telegram ID из ADMIN_IDS.\n" +
+          "Пусть администратор выполнит здесь команду /group.",
+        reply_markup: groupLinkButton("Открыть сервис")
+      });
+    }
+    return;
+  }
+
+  if (!cmd) return;
+
+  if (cmd === "/group") {
+    if (!isAdmin) {
+      await tgCall("sendMessage", {
+        chat_id: chat.id,
+        text: "Привязать админ-группу может только Telegram ID из ADMIN_IDS."
+      });
+      return;
+    }
+    registerAdminGroup(chat, msg.from.id);
+    await tgCall("sendMessage", {
+      chat_id: chat.id,
+      text:
+        `✅ Админ-группа привязана: ${adminGroupLabel()}\n` +
+        "Теперь служебные уведомления бота будут приходить сюда.",
+      reply_markup: groupLinkButton("Открыть сервис")
+    });
+    return;
+  }
+
+  if (!isAdmin) return;
+
+  if (cmd === "/admin") {
+    const active = deals.filter((d) => ["new", "paid", "fulfilled"].includes(d.status)).length;
+    const disputes = deals.filter((d) => d.status === "dispute").length;
+    const awaiting = deals.filter((d) => d.status === "new" && d.bitpapaClaimedAt).length;
+    await tgCall("sendMessage", {
+      chat_id: chat.id,
+      text:
+        "Админ-группа CRB GA\n\n" +
+        `Сделок всего: ${deals.length}\n` +
+        `Активных: ${active}\n` +
+        `Споров: ${disputes}\n` +
+        `Ожидают подтверждения оплаты: ${awaiting}\n` +
+        `Текущая группа: ${adminGroupLabel()}`,
+      reply_markup: groupLinkButton("Открыть админ-панель")
+    });
+    return;
+  }
+
+  if (cmd === "/deal") {
+    const parts = msg.text.trim().split(/\s+/);
+    const dealId = parts[1] ? parts[1].toUpperCase() : null;
+    if (!dealId) {
+      await tgCall("sendMessage", { chat_id: chat.id, text: "Укажите ID сделки: /deal CRB-..." });
+      return;
+    }
+    const deal = findDeal(dealId);
+    if (!deal) {
+      await tgCall("sendMessage", { chat_id: chat.id, text: "Сделка не найдена." });
+      return;
+    }
+    await sendDealSummary(chat.id, deal, msg.from, false);
+  }
+}
+
 async function handleUpdate(upd) {
+  const msg = upd.message;
   if (upd.inline_query) {
     await handleInlineQuery(upd.inline_query);
     return;
@@ -911,8 +1457,12 @@ async function handleUpdate(upd) {
     await handleTemplateCallback(upd.callback_query);
     return;
   }
-  const msg = upd.message;
-  if (!msg || !msg.text || msg.chat.type !== "private") return;
+  if (!msg) return;
+  if (msg.chat.type !== "private") {
+    await handleGroupMessage(msg);
+    return;
+  }
+  if (!msg.text) return;
   const chatId = msg.chat.id;
   const isAdmin = ADMIN_IDS.includes(msg.from.id);
   const cmd = msg.text.trim().split(/[\s@]/)[0];
@@ -992,27 +1542,7 @@ async function handleUpdate(upd) {
       await tgCall("sendMessage", { chat_id: chatId, text: "Вы не являетесь участником этой сделки." });
       return;
     }
-    const stLabels = {
-      new: "Ожидает оплаты", paid: "В гаранте (оплачена)", fulfilled: "Исполнена",
-      completed: "Завершена", dispute: "Спор", cancelled: "Отменена"
-    };
-    const isOwner = deal.ownerId === msg.from.id;
-    const viewerRole = isOwner ? deal.role : (deal.role === "seller" ? "buyer" : "seller");
-    const sellerLabel = viewerRole === "seller" ? "вы" : deal.counterparty;
-    const buyerLabel = viewerRole === "buyer" ? "вы" : deal.counterparty;
-    await tgCall("sendMessage", {
-      chat_id: chatId,
-      text:
-        `🔖 <b>Сделка ${deal.id}</b>\n` +
-        `📌 ${deal.title}\n\n` +
-        `Статус: <b>${stLabels[deal.status] || deal.status}</b>\n` +
-        `Сумма: ${deal.amount} ${deal.currency}\n` +
-        `К оплате: ${deal.total} ${deal.currency} (комиссия ${deal.feePercent}%)\n` +
-        `Продавец: ${sellerLabel}\n` +
-        `Покупатель: ${buyerLabel}`,
-      parse_mode: "HTML",
-      reply_markup: appButton("Открыть в приложении")
-    });
+    await sendDealSummary(chatId, deal, msg.from, true);
   } else if (cmd === "/support") {
     enterSupportMode(chatId);
     await tgCall("sendMessage", {
@@ -1061,11 +1591,10 @@ app.use(express.static(path.join(__dirname, "..")));
 
 app.listen(PORT, () => {
   console.log(`CRB GA backend запущен на порту ${PORT}`);
-  if (!BOT_TOKEN) console.warn("⚠️  BOT_TOKEN не задан — авторизация и бот работать не будут");
+  if (!getBotToken()) console.warn("⚠️  BOT_TOKEN не задан — авторизация и бот работать не будут");
   if (!XROCKET_API_KEY) console.warn("⚠️  XROCKET_API_KEY не задан — счета xRocket создаваться не будут");
   if (!WEBHOOK_SECRET) console.warn("⚠️  WEBHOOK_SECRET не задан — вебхуки шлюзов отключены");
-  if (BOT_TOKEN) {
-    setupBot().catch((e) => console.error("[bot] setup:", e.message));
-    botLoop().catch((e) => console.error("[bot] loop:", e.message));
+  if (getBotToken()) {
+    ensureBotRuntime().catch((e) => console.error("[bot] setup:", e.message));
   }
 });

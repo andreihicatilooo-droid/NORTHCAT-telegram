@@ -1,16 +1,94 @@
 (function () {
   "use strict";
 
-  var CFG = window.NORTHCAT_CONFIG || {};
-  var FEE_PERCENT = CFG.FEE_PERCENT != null ? CFG.FEE_PERCENT : 5;
-  var METHODS = CFG.PAY_METHODS || [];
+  var DEFAULT_CFG = cloneValue(window.NORTHCAT_CONFIG || {});
+  var CFG = {};
+  var FEE_PERCENT = 5;
+  var METHODS = [];
+  var STORAGE_DEALS = "northcat_deals_v1";
+  var STORAGE_AUTH = "northcat_auth_v1";
+  var STORAGE_SETTINGS = "northcat_runtime_config_v1";
+  var searchParams = new URLSearchParams(window.location.search || "");
+  var openAdminOnStart = searchParams.get("admin") === "1";
 
   // API_URL: "" — демо; "auto" — тот же домен (если бэкенд отвечает); иначе адрес бэкенда
   var API_BASE = "";
   var apiAvailable = false;
 
+  function cloneValue(value) {
+    if (value == null) return {};
+    return JSON.parse(JSON.stringify(value));
+  }
+
+  function normalizeApiUrl(value) {
+    var raw = String(value == null ? "" : value).trim();
+    if (!raw) return "";
+    return raw === "auto" ? "auto" : raw.replace(/\/+$/, "");
+  }
+
+  function normalizeUsername(value) {
+    return String(value == null ? "" : value).trim().replace(/^@+/, "");
+  }
+
+  function normalizePayMethods(methods) {
+    if (!Array.isArray(methods)) return [];
+    return methods.map(function (item) {
+      item = item || {};
+      var name = String(item.name || "").trim();
+      var id = String(item.id || name).trim();
+      var fallback = name || id || "—";
+      return {
+        id: id,
+        name: name || id,
+        mark: String(item.mark || fallback.slice(0, 2).toUpperCase()).trim(),
+        hint: String(item.hint || "").trim(),
+        kind: item.kind === "telegram" || item.kind === "redirect" ? item.kind : "manual"
+      };
+    }).filter(function (item) {
+      return item.id && item.name;
+    });
+  }
+
+  function getStoredSettings() {
+    try {
+      return JSON.parse(localStorage.getItem(STORAGE_SETTINGS)) || {};
+    } catch (e) {
+      return {};
+    }
+  }
+
+  function saveStoredSettings(settings) {
+    localStorage.setItem(STORAGE_SETTINGS, JSON.stringify(settings));
+  }
+
+  function clearStoredSettings() {
+    localStorage.removeItem(STORAGE_SETTINGS);
+  }
+
+  function buildRuntimeConfig(overrides) {
+    var cfg = cloneValue(DEFAULT_CFG);
+    var extra = overrides || getStoredSettings();
+    Object.keys(extra || {}).forEach(function (key) {
+      cfg[key] = cloneValue(extra[key]);
+    });
+    cfg.API_URL = normalizeApiUrl(cfg.API_URL);
+    cfg.BOT_USERNAME = normalizeUsername(cfg.BOT_USERNAME);
+    cfg.SUPPORT_USERNAME = normalizeUsername(cfg.SUPPORT_USERNAME);
+    cfg.BITPAPA_ACCOUNT = normalizeUsername(cfg.BITPAPA_ACCOUNT);
+    cfg.PAY_METHODS = normalizePayMethods(cfg.PAY_METHODS);
+    return cfg;
+  }
+
+  function applyRuntimeConfig(overrides) {
+    CFG = buildRuntimeConfig(overrides);
+    var fee = parseFloat(CFG.FEE_PERCENT);
+    FEE_PERCENT = isFinite(fee) && fee >= 0 ? fee : 5;
+    METHODS = normalizePayMethods(CFG.PAY_METHODS);
+    if (!METHODS.length) METHODS = normalizePayMethods(DEFAULT_CFG.PAY_METHODS || []);
+  }
+
   function resolveApi() {
-    var raw = (CFG.API_URL || "").replace(/\/+$/, "");
+    var raw = normalizeApiUrl(CFG.API_URL);
     if (!raw) return Promise.resolve(false);
     API_BASE = raw === "auto" ? "" : raw;
     return fetch(API_BASE + "/api/health", { method: "GET" })
@@ -24,9 +102,7 @@
   }
 
   var tg = window.Telegram && window.Telegram.WebApp;
-
-  var STORAGE_DEALS = "northcat_deals_v1";
-  var STORAGE_AUTH = "northcat_auth_v1";
+  applyRuntimeConfig();
 
   var STATUS = {
     new:       { label: "Ожидает оплаты", cls: "status--new" },
@@ -45,6 +121,8 @@
   ];
 
   var deals = [];
+  var adminDeals = [];
+  var adminUsers = [];
   var currentFilter = "all";
   var currentDealId = null;
   var createRole = "seller";
@@ -789,26 +867,243 @@
     else window.open(link, "_blank");
   }
 
+  function setGuidesOpen(open) {
+    var panel = $("guides-panel");
+    var button = $("guides-button");
+    if (!panel || !button) return;
+    panel.hidden = !open;
+    panel.classList.toggle("is-open", open);
+    button.textContent = open ? "Скрыть гайды" : "Гайды";
+    button.setAttribute("aria-expanded", open ? "true" : "false");
+    if (open) {
+      setTimeout(function () {
+        panel.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      }, 60);
+    }
+  }
+
   $("support-button").addEventListener("click", openSupport);
+  $("guides-button").addEventListener("click", function () {
+    haptic("light");
+    var panel = $("guides-panel");
+    setGuidesOpen(panel.hidden);
+  });
   $("deal-back").addEventListener("click", function () { showScreen("screen-deals"); });
 
   /* ---------- Админ-панель ---------- */
 
   var isAdmin = false;
 
-  // После входа в боевом режиме узнаём права: гаранту открывается вкладка «Админ»
-  function checkAdmin() {
-    if (isDemo()) return;
-    api("GET", "/api/me").then(function (me) {
-      isAdmin = !!(me && me.isAdmin);
-      $("tab-admin").hidden = !isAdmin;
-    }).catch(function () { /* не критично */ });
+  function isLocalHost() {
+    var host = window.location.hostname;
+    return host === "127.0.0.1" || host === "localhost";
   }
 
-  function loadAdminDeals() {
+  function hasRuntimeOverrides() {
+    return Object.keys(getStoredSettings()).length > 0;
+  }
+
+  function canUseRuntimeAdmin() {
+    return !!(isAdmin || isLocalHost() || (user && user.demo));
+  }
+
+  function canEditServerRuntime() {
+    return !!(isAdmin || isLocalHost());
+  }
+
+  function currentApiMode() {
+    if (CFG.API_URL === "") return "demo";
+    if (CFG.API_URL === "auto") return "auto";
+    return "custom";
+  }
+
+  function renderRuntimeMetaItem(label, value) {
+    var item = document.createElement("div");
+    item.className = "admin-runtime-pill";
+
+    var title = document.createElement("strong");
+    title.textContent = label;
+
+    var text = document.createElement("span");
+    text.textContent = value;
+
+    item.appendChild(title);
+    item.appendChild(text);
+    return item;
+  }
+
+  function renderAdminRuntimeMeta() {
+    var box = $("admin-runtime-meta");
+    if (!box) return;
+    box.innerHTML = "";
+
+    var apiLabel = CFG.API_URL === ""
+      ? "demo — работа без backend"
+      : (CFG.API_URL === "auto"
+        ? "auto — " + (apiAvailable ? "backend найден" : "ожидается backend на том же домене")
+        : CFG.API_URL);
+
+    box.appendChild(renderRuntimeMetaItem(
+      "Источник",
+      hasRuntimeOverrides() ? "Локальные overrides в localStorage" : "Базовые значения из js/config.js"
+    ));
+    box.appendChild(renderRuntimeMetaItem("API", apiLabel));
+    box.appendChild(renderRuntimeMetaItem(
+      "Логин через Telegram",
+      CFG.BOT_USERNAME ? "@" + CFG.BOT_USERNAME : "Выключен"
+    ));
+    box.appendChild(renderRuntimeMetaItem(
+      "Способы оплаты",
+      METHODS.map(function (m) { return m.name; }).join(", ") || "Не настроены"
+    ));
+  }
+
+  function renderAdminServerRuntimeMeta(runtime) {
+    var box = $("admin-server-runtime-meta");
+    if (!box) return;
+    box.innerHTML = "";
+
+    runtime = runtime || {};
+    var bot = runtime.bot || null;
+
+    box.appendChild(renderRuntimeMetaItem(
+      "BOT_TOKEN",
+      runtime.botTokenConfigured ? runtime.botTokenMasked : "Не задан"
+    ));
+    box.appendChild(renderRuntimeMetaItem(
+      "Бот",
+      bot ? ((bot.first_name || "Bot") + (bot.username ? " @" + bot.username : "")) : "Telegram-бот не инициализирован"
+    ));
+    box.appendChild(renderRuntimeMetaItem(
+      "Группа",
+      runtime.adminGroup && runtime.adminGroup.label ? runtime.adminGroup.label : "не привязана"
+    ));
+    box.appendChild(renderRuntimeMetaItem(
+      "Последнее обновление",
+      runtime.updatedAt ? fmtDate(runtime.updatedAt) : "—"
+    ));
+  }
+
+  function toggleAdminApiField() {
+    var field = $("admin-api-custom-field");
+    if (!field) return;
+    field.hidden = $("admin-api-mode").value !== "custom";
+  }
+
+  function fillAdminSettingsForm() {
+    if (!$("admin-settings-form")) return;
+    $("admin-api-mode").value = currentApiMode();
+    $("admin-api-custom").value = currentApiMode() === "custom" ? CFG.API_URL : "";
+    $("admin-bot-username").value = CFG.BOT_USERNAME || "";
+    $("admin-fee-percent").value = String(FEE_PERCENT);
+    $("admin-support-username").value = CFG.SUPPORT_USERNAME || "";
+    $("admin-bitpapa-account").value = CFG.BITPAPA_ACCOUNT || "";
+    $("admin-pay-methods").value = JSON.stringify(METHODS, null, 2);
+    toggleAdminApiField();
+  }
+
+  function parseAdminSettings() {
+    var fee = parseFloat($("admin-fee-percent").value);
+    var apiMode = $("admin-api-mode").value;
+    var apiUrl = apiMode === "custom"
+      ? normalizeApiUrl($("admin-api-custom").value)
+      : (apiMode === "auto" ? "auto" : "");
+    var methods;
+
+    if (!isFinite(fee) || fee < 0) {
+      throw new Error("Комиссия должна быть числом 0 или больше.");
+    }
+    if (apiMode === "custom" && !apiUrl) {
+      throw new Error("Укажите корректный custom API URL.");
+    }
+
+    try {
+      methods = JSON.parse($("admin-pay-methods").value);
+    } catch (e) {
+      throw new Error("PAY_METHODS должен быть корректным JSON-массивом.");
+    }
+
+    methods = normalizePayMethods(methods);
+    if (!methods.length) {
+      throw new Error("Добавьте хотя бы один способ оплаты в PAY_METHODS.");
+    }
+
+    return {
+      API_URL: apiUrl,
+      BOT_USERNAME: normalizeUsername($("admin-bot-username").value),
+      FEE_PERCENT: Math.round(fee * 100) / 100,
+      SUPPORT_USERNAME: normalizeUsername($("admin-support-username").value),
+      BITPAPA_ACCOUNT: normalizeUsername($("admin-bitpapa-account").value),
+      PAY_METHODS: methods
+    };
+  }
+
+  function syncAdminAccess() {
+    var canOpen = canUseRuntimeAdmin();
+    $("tab-admin").hidden = !canOpen;
+    $("admin-refresh").hidden = !isAdmin;
+    $("admin-server-note").hidden = !canOpen || isAdmin;
+    $("admin-server-settings").hidden = !canEditServerRuntime();
+    $("admin-search-panel").hidden = !isAdmin;
+    $("admin-users-panel").hidden = !isAdmin;
+    $("admin-deals-panel").hidden = !isAdmin;
+
+    if (!canOpen && $("screen-admin").classList.contains("screen--active")) {
+      showScreen("screen-deals");
+    }
+
+    fillAdminSettingsForm();
+    renderAdminRuntimeMeta();
+  }
+
+  function maybeOpenAdminScreen() {
+    if (!openAdminOnStart || !canUseRuntimeAdmin()) return;
+    openAdminOnStart = false;
+    showScreen("screen-admin");
+    loadAdminOverview();
+  }
+
+  // После входа в боевом режиме узнаём права: гаранту открывается вкладка «Админ»
+  function checkAdmin() {
+    if (isDemo()) {
+      isAdmin = false;
+      syncAdminAccess();
+      maybeOpenAdminScreen();
+      return;
+    }
+
+    api("GET", "/api/me").then(function (me) {
+      isAdmin = !!(me && me.isAdmin);
+      syncAdminAccess();
+      maybeOpenAdminScreen();
+    }).catch(function () {
+      isAdmin = false;
+      syncAdminAccess();
+      maybeOpenAdminScreen();
+    });
+  }
+
+  function loadAdminOverview() {
+    syncAdminAccess();
+    if (!canUseRuntimeAdmin()) return;
+    if (canEditServerRuntime()) {
+      api("GET", "/api/admin/runtime").then(renderAdminServerRuntimeMeta).catch(function () {
+        renderAdminServerRuntimeMeta(null);
+      });
+    }
     if (!isAdmin) return;
-    api("GET", "/api/admin/deals").then(renderAdmin).catch(function () {
-      showAlert("Не удалось загрузить сделки.");
+
+    Promise.all([
+      api("GET", "/api/admin/deals"),
+      api("GET", "/api/admin/users"),
+      api("GET", "/api/admin/runtime")
+    ]).then(function (results) {
+      adminDeals = results[0] || [];
+      renderAdmin(adminDeals);
+      renderAdminUsers(results[1] || {});
+      renderAdminServerRuntimeMeta(results[2] || null);
+    }).catch(function () {
+      showAlert("Не удалось загрузить расширенную админ-панель.");
     });
   }
 
@@ -908,6 +1203,110 @@
     });
   }
 
+  function renderAdminUsers(payload) {
+    payload = payload || {};
+    adminUsers = payload.users || [];
+    var summary = payload.summary || {};
+
+    $("admin-users-total").textContent = summary.totalUsers || 0;
+    $("admin-users-active").textContent = summary.activeUsers || 0;
+    $("admin-users-completed").textContent = summary.completedUsers || 0;
+    $("admin-users-disputed").textContent = summary.disputedUsers || 0;
+
+    var list = $("admin-users-list");
+    list.innerHTML = "";
+    $("admin-users-empty").classList.toggle("empty-state--visible", adminUsers.length === 0);
+
+    adminUsers.slice(0, 12).forEach(function (entry) {
+      var li = document.createElement("li");
+      li.className = "deal-item";
+
+      var top = document.createElement("div");
+      top.className = "deal-item-top";
+      var title = document.createElement("span");
+      title.className = "deal-item-title";
+      title.textContent = entry.label;
+      var chip = document.createElement("span");
+      chip.className = "status-chip status--new";
+      chip.textContent = entry.totalDeals + " сделок";
+      top.appendChild(title);
+      top.appendChild(chip);
+
+      var meta = document.createElement("div");
+      meta.className = "admin-user-meta";
+      meta.innerHTML =
+        "<span>Продавец: <strong>" + entry.sellerDeals + "</strong> · Покупатель: <strong>" + entry.buyerDeals + "</strong></span>" +
+        "<span class=\"admin-user-turnover\">Оборот: <strong>" + fmt(entry.completedTurnover || 0, "USDT") + "</strong></span>";
+
+      var tags = document.createElement("div");
+      tags.className = "admin-result-tags";
+      [
+        "Активных: " + entry.activeDeals,
+        "Завершено: " + entry.completedDeals,
+        "Споров: " + entry.disputeDeals,
+        entry.username ? ("@" + entry.username) : (entry.id ? ("ID " + entry.id) : "Без Telegram ID")
+      ].forEach(function (text) {
+        var tag = document.createElement("span");
+        tag.className = "admin-result-tag";
+        tag.textContent = text;
+        tags.appendChild(tag);
+      });
+
+      li.appendChild(top);
+      li.appendChild(meta);
+      li.appendChild(tags);
+      list.appendChild(li);
+    });
+  }
+
+  function renderAdminSearch(data, query) {
+    data = data || { deals: [], users: [], counts: { deals: 0, users: 0 } };
+    var list = $("admin-search-results");
+    list.innerHTML = "";
+
+    var total = (data.counts && data.counts.deals || 0) + (data.counts && data.counts.users || 0);
+    $("admin-search-empty").classList.toggle("empty-state--visible", total === 0);
+    $("admin-search-meta").textContent = query
+      ? ("Найдено: сделок — " + (data.counts.deals || 0) + ", пользователей — " + (data.counts.users || 0))
+      : "Ищет по сделкам и пользователям сервиса.";
+
+    (data.deals || []).forEach(function (deal) {
+      var li = document.createElement("li");
+      li.className = "deal-item";
+      li.innerHTML =
+        '<div class="deal-item-top"><span class="deal-item-title">Сделка ' + deal.id + '</span><span class="status-chip status--paid">' + deal.status + '</span></div>' +
+        '<div class="deal-item-bottom"><span>' + deal.title + ' · ' + deal.counterparty + '</span><span class="deal-item-amount">' + fmt(deal.amount, deal.currency) + '</span></div>';
+      var tags = document.createElement("div");
+      tags.className = "admin-result-tags";
+      ["Метод: " + deal.method, "Дата: " + fmtDate(deal.createdAt)].forEach(function (text) {
+        var tag = document.createElement("span");
+        tag.className = "admin-result-tag";
+        tag.textContent = text;
+        tags.appendChild(tag);
+      });
+      li.appendChild(tags);
+      list.appendChild(li);
+    });
+
+    (data.users || []).forEach(function (entry) {
+      var li = document.createElement("li");
+      li.className = "deal-item";
+      li.innerHTML =
+        '<div class="deal-item-top"><span class="deal-item-title">Пользователь ' + entry.label + '</span><span class="status-chip status--new">user</span></div>' +
+        '<div class="deal-item-bottom"><span>Сделок: ' + entry.totalDeals + ' · Завершено: ' + entry.completedDeals + '</span><span class="deal-item-amount">' + fmt(entry.completedTurnover || 0, 'USDT') + '</span></div>';
+      var tags = document.createElement("div");
+      tags.className = "admin-result-tags";
+      ["Споров: " + entry.disputeDeals, entry.username ? ("@" + entry.username) : "Без username"].forEach(function (text) {
+        var tag = document.createElement("span");
+        tag.className = "admin-result-tag";
+        tag.textContent = text;
+        tags.appendChild(tag);
+      });
+      li.appendChild(tags);
+      list.appendChild(li);
+    });
+  }
+
   function resolveDispute(deal, resolution) {
     var text = resolution === "seller"
       ? "Решить спор в пользу продавца? Гарант выплатит " + fmt(deal.amount, deal.currency) + "."
@@ -923,13 +1322,79 @@
 
   $("admin-refresh").addEventListener("click", function () {
     haptic("light");
-    loadAdminDeals();
+    loadAdminOverview();
+  });
+
+  $("admin-api-mode").addEventListener("change", toggleAdminApiField);
+
+  $("admin-settings-form").addEventListener("submit", function (e) {
+    e.preventDefault();
+    try {
+      var settings = parseAdminSettings();
+      saveStoredSettings(settings);
+      applyRuntimeConfig(settings);
+      renderAdminRuntimeMeta();
+      if (window.showToast) window.showToast("Настройки сохранены. Перезагружаю Mini App…");
+      setTimeout(function () { window.location.reload(); }, 450);
+    } catch (err) {
+      showAlert(err.message || "Не удалось сохранить настройки.");
+    }
+  });
+
+  $("admin-settings-reset").addEventListener("click", function () {
+    showConfirm("Сбросить локальные overrides и вернуться к значениям из js/config.js?", function () {
+      clearStoredSettings();
+      applyRuntimeConfig();
+      renderAdminRuntimeMeta();
+      if (window.showToast) window.showToast("Локальные overrides сброшены.");
+      setTimeout(function () { window.location.reload(); }, 450);
+    });
+  });
+
+  $("admin-server-refresh").addEventListener("click", function () {
+    if (!canEditServerRuntime()) return;
+    api("GET", "/api/admin/runtime").then(renderAdminServerRuntimeMeta).catch(function () {
+      showAlert("Не удалось получить статус серверного бота.");
+    });
+  });
+
+  $("admin-server-form").addEventListener("submit", function (e) {
+    e.preventDefault();
+    var token = $("admin-server-bot-token").value.trim();
+    if (!token) {
+      showAlert("Введите BOT_TOKEN / API key бота.");
+      return;
+    }
+    api("POST", "/api/admin/runtime", { botToken: token }).then(function (res) {
+      $("admin-server-bot-token").value = "";
+      renderAdminServerRuntimeMeta(res);
+      if (window.showToast) window.showToast("Токен бота обновлён.");
+    }).catch(function () {
+      showAlert("Не удалось сохранить токен бота. Проверьте ключ и повторите попытку.");
+    });
+  });
+
+  $("admin-search-form").addEventListener("submit", function (e) {
+    e.preventDefault();
+    if (!isAdmin) return;
+    var query = $("admin-search-query").value.trim();
+    if (!query) {
+      renderAdminSearch({ deals: [], users: [], counts: { deals: 0, users: 0 } }, "");
+      return;
+    }
+    api("GET", "/api/admin/search?q=" + encodeURIComponent(query)).then(function (res) {
+      renderAdminSearch(res, query);
+    }).catch(function () {
+      showAlert("Не удалось выполнить поиск по сервису.");
+    });
   });
 
   /* ---------- Инициализация ---------- */
 
+  syncAdminAccess();
   renderPayMethods();
   recalcFee();
+  renderAdminSearch({ deals: [], users: [], counts: { deals: 0, users: 0 } }, "");
   resolveApi().then(function (ok) {
     apiAvailable = ok;
     initAuth();

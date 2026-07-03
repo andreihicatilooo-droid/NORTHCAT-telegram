@@ -183,43 +183,267 @@
         </ol>
       </div>
 
+      <button class="btn btn--primary btn--small" id="guides-button" type="button">Гайды</button>
+
+      <div class="info-card guide-card" id="guides-panel" hidden>
+        <div class="guide-card-head">
+          <div>
+            <div class="info-title">Гайды по сервису</div>
+            <p class="guide-subtitle">Коротко и по делу: как пользоваться CRB GA без гадания на пикселях.</p>
+          </div>
+          <span class="guide-badge">Mini App</span>
+        </div>
+
+        <div class="guide-section">
+          <div class="guide-section-title">Что это за сервис</div>
+          <p class="guide-text">
+            CRB GA — это escrow-сервис внутри Telegram. Покупатель переводит средства,
+            гарант удерживает их до подтверждения результата, а продавец получает выплату
+            только после приёмки или решения арбитра.
+          </p>
+        </div>
+
+        <div class="guide-section">
+          <div class="guide-section-title">Как провести сделку</div>
+          <div class="guide-steps">
+            <div class="guide-step">
+              <span class="guide-step-num">1</span>
+              <div>
+                <strong>Создайте сделку</strong>
+                <p>Укажите роль, контрагента, предмет сделки, условия, сумму и способ оплаты.</p>
+              </div>
+            </div>
+            <div class="guide-step">
+              <span class="guide-step-num">2</span>
+              <div>
+                <strong>Покупатель оплачивает</strong>
+                <p>Средства блокируются у гаранта через счёт или ручной перевод по выбранному методу.</p>
+              </div>
+            </div>
+            <div class="guide-step">
+              <span class="guide-step-num">3</span>
+              <div>
+                <strong>Продавец исполняет условия</strong>
+                <p>После выполнения сделки продавец отмечает исполнение прямо в карточке сделки.</p>
+              </div>
+            </div>
+            <div class="guide-step">
+              <span class="guide-step-num">4</span>
+              <div>
+                <strong>Покупатель подтверждает приёмку</strong>
+                <p>После подтверждения гарант выпускает выплату продавцу за вычетом комиссии.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="guide-grid">
+          <div class="guide-panel">
+            <div class="guide-section-title">Оплата</div>
+            <p class="guide-text">Выберите платёжку при создании сделки. Для автоматических методов сервис создаёт счёт, для ручных — показывает реквизиты и код сделки.</p>
+          </div>
+          <div class="guide-panel">
+            <div class="guide-section-title">Споры</div>
+            <p class="guide-text">Если условия нарушены, любая сторона может открыть спор. Арбитр смотрит историю сделки и принимает решение.</p>
+          </div>
+        </div>
+
+        <div class="guide-tips">
+          <div class="guide-tip">
+            <strong>Совет</strong>
+            <span>Всегда подробно заполняйте условия: это ваш главный аргумент в споре.</span>
+          </div>
+          <div class="guide-tip">
+            <strong>Важно</strong>
+            <span>Не отправляйте товар или доступ до статуса «Оплачена» — иначе рискуете сделать подарок мошеннику.</span>
+          </div>
+        </div>
+      </div>
+
       <button class="btn btn--outline" id="support-button">Связаться с поддержкой</button>
       <button class="btn btn--ghost" id="logout-button" hidden>Выйти</button>
     </main>
 
-    <!-- Экран: админ-панель (виден только гаранту) -->
+    <!-- Экран: админ-панель -->
     <main class="screen" id="screen-admin">
       <div class="screen-head">
         <h2 class="screen-title">Админ-панель</h2>
-        <button class="btn btn--outline btn--small" id="admin-refresh">Обновить</button>
+        <button class="btn btn--outline btn--small" id="admin-refresh">Обновить сделки</button>
       </div>
-      <div class="stats-grid">
-        <div class="stat-card">
-          <div class="stat-value" id="admin-stat-total">0</div>
-          <div class="stat-label">Сделок</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-value" id="admin-stat-active">0</div>
-          <div class="stat-label">Активных</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-value" id="admin-stat-disputes">0</div>
-          <div class="stat-label">Споров</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-value" id="admin-stat-awaiting">0</div>
-          <div class="stat-label">Ждут оплаты</div>
-        </div>
+      <p class="screen-subtitle">Здесь можно менять runtime-переменные Mini App без ручного редактирования файлов. Настройки сохраняются локально в этом браузере.</p>
+
+      <div class="detail-card admin-settings-card">
+        <div class="detail-label">Настройки Mini App</div>
+        <p class="admin-settings-text">
+          Переопределяются <code>API_URL</code>, <code>BOT_USERNAME</code>, комиссия,
+          поддержка, аккаунт Bitpapa и <code>PAY_METHODS</code>. Серверные секреты
+          из <code>backend/.env</code> этот экран не меняет.
+        </p>
+
+        <form id="admin-settings-form" class="admin-settings-form" autocomplete="off">
+          <div class="admin-settings-grid">
+            <div class="field">
+              <label class="field-label" for="admin-api-mode">Режим API</label>
+              <select class="input" id="admin-api-mode">
+                <option value="auto">auto — тот же домен</option>
+                <option value="demo">demo — только localStorage</option>
+                <option value="custom">custom — свой URL</option>
+              </select>
+            </div>
+
+            <div class="field" id="admin-api-custom-field" hidden>
+              <label class="field-label" for="admin-api-custom">Custom API URL</label>
+              <input class="input" id="admin-api-custom" type="url" placeholder="https://garant.example.com">
+            </div>
+
+            <div class="field">
+              <label class="field-label" for="admin-bot-username">BOT_USERNAME</label>
+              <input class="input" id="admin-bot-username" type="text" placeholder="CRBGABOT">
+            </div>
+
+            <div class="field">
+              <label class="field-label" for="admin-fee-percent">Комиссия, %</label>
+              <input class="input" id="admin-fee-percent" type="number" min="0" step="0.1" placeholder="5">
+            </div>
+
+            <div class="field">
+              <label class="field-label" for="admin-support-username">Поддержка</label>
+              <input class="input" id="admin-support-username" type="text" placeholder="northcat_support">
+            </div>
+
+            <div class="field">
+              <label class="field-label" for="admin-bitpapa-account">Аккаунт Bitpapa</label>
+              <input class="input" id="admin-bitpapa-account" type="text" placeholder="northcat_garant">
+            </div>
+
+            <div class="field field--full">
+              <label class="field-label" for="admin-pay-methods">PAY_METHODS (JSON)</label>
+              <textarea
+                class="input input--area admin-json"
+                id="admin-pay-methods"
+                rows="10"
+                placeholder='[{"id":"xrocket","name":"xRocket","mark":"XR","hint":"Крипто-счёт в Telegram","kind":"telegram"}]'
+              ></textarea>
+            </div>
+          </div>
+
+          <div class="settings-actions">
+            <button type="submit" class="btn btn--primary">Сохранить настройки</button>
+            <button type="button" class="btn btn--outline" id="admin-settings-reset">Сбросить overrides</button>
+          </div>
+        </form>
+
+        <div class="admin-runtime-meta" id="admin-runtime-meta"></div>
       </div>
-      <ul class="deal-list" id="admin-list"></ul>
-      <div class="empty-state" id="admin-empty">
-        <div class="empty-mark">—</div>
-        <p>Сделок пока нет.</p>
+
+      <div class="detail-card admin-settings-card" id="admin-server-settings" hidden>
+        <div class="detail-label">Серверный BOT_TOKEN</div>
+        <p class="admin-settings-text">
+          Этот раздел меняет runtime-настройку самого сервера. Здесь можно обновить
+          Telegram API ключ бота без ручного редактирования <code>.env</code>.
+          После сохранения бот переподключится с новым токеном.
+        </p>
+
+        <form id="admin-server-form" class="admin-settings-form" autocomplete="off">
+          <div class="admin-settings-grid">
+            <div class="field field--full">
+              <label class="field-label" for="admin-server-bot-token">BOT_TOKEN / API key бота</label>
+              <input class="input" id="admin-server-bot-token" type="password" placeholder="123456:ABC..." autocomplete="off">
+            </div>
+          </div>
+
+          <div class="settings-actions">
+            <button type="submit" class="btn btn--primary">Сохранить токен бота</button>
+            <button type="button" class="btn btn--outline" id="admin-server-refresh">Обновить статус</button>
+          </div>
+        </form>
+
+        <div class="admin-runtime-meta" id="admin-server-runtime-meta"></div>
       </div>
+
+      <div class="info-card" id="admin-server-note" hidden>
+        <div class="info-title">Серверный доступ</div>
+        <p class="admin-settings-text">
+          Для подтверждения оплат и арбитража нужен вход под Telegram ID,
+          который есть в <code>ADMIN_IDS</code>. Локально здесь доступна
+          настройка клиентских переменных Mini App.
+        </p>
+      </div>
+
+      <section id="admin-search-panel" hidden>
+        <div class="detail-label admin-section-label">Поиск по сервису</div>
+        <form id="admin-search-form" class="admin-search-form" autocomplete="off">
+          <div class="admin-search-row">
+            <input class="input" id="admin-search-query" type="search" placeholder="ID сделки, @username, название, условия, метод оплаты">
+            <button type="submit" class="btn btn--primary btn--small">Найти</button>
+          </div>
+        </form>
+        <div class="admin-search-meta" id="admin-search-meta">Ищет по сделкам и пользователям сервиса.</div>
+        <ul class="deal-list" id="admin-search-results"></ul>
+        <div class="empty-state empty-state--visible" id="admin-search-empty">
+          <div class="empty-mark">⌕</div>
+          <p>Введите запрос, чтобы найти сделку или пользователя по всему сервису.</p>
+        </div>
+      </section>
+
+      <section id="admin-users-panel" hidden>
+        <div class="detail-label admin-section-label">Статистика по пользователям</div>
+        <div class="stats-grid">
+          <div class="stat-card">
+            <div class="stat-value" id="admin-users-total">0</div>
+            <div class="stat-label">Пользователей</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value" id="admin-users-active">0</div>
+            <div class="stat-label">Активных</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value" id="admin-users-completed">0</div>
+            <div class="stat-label">С завершёнными</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value" id="admin-users-disputed">0</div>
+            <div class="stat-label">Со спорами</div>
+          </div>
+        </div>
+        <ul class="deal-list" id="admin-users-list"></ul>
+        <div class="empty-state" id="admin-users-empty">
+          <div class="empty-mark">—</div>
+          <p>Пользователи появятся после создания сделок.</p>
+        </div>
+      </section>
+
+      <section id="admin-deals-panel">
+        <div class="detail-label admin-section-label">Сделки и арбитраж</div>
+        <div class="stats-grid">
+          <div class="stat-card">
+            <div class="stat-value" id="admin-stat-total">0</div>
+            <div class="stat-label">Сделок</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value" id="admin-stat-active">0</div>
+            <div class="stat-label">Активных</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value" id="admin-stat-disputes">0</div>
+            <div class="stat-label">Споров</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value" id="admin-stat-awaiting">0</div>
+            <div class="stat-label">Ждут оплаты</div>
+          </div>
+        </div>
+        <ul class="deal-list" id="admin-list"></ul>
+        <div class="empty-state" id="admin-empty">
+          <div class="empty-mark">—</div>
+          <p>Сделок пока нет.</p>
+        </div>
+      </section>
     </main>
 
     <!-- Нижняя навигация -->
     <nav class="tabbar">
+      <div class="tabbar-indicator" id="tabbar-indicator"></div>
       <button class="tab tab--active" data-screen="screen-deals">
         <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
         <span class="tab-label">Сделки</span>
@@ -238,8 +462,12 @@
       </button>
     </nav>
 
+    <!-- Тост-уведомление -->
+    <div class="toast" id="toast"></div>
+
   </div>
   <script src="js/config.js"></script>
   <script src="js/app.js"></script>
+  <script src="js/ui.js"></script>
 </body>
 </html>
