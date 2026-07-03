@@ -71,7 +71,9 @@ try {
 }
 
 function persistChats() {
-  try { fs.writeFileSync(USER_CHATS_FILE, JSON.stringify(userChats)); } catch (e) {}
+  try { fs.writeFileSync(USER_CHATS_FILE, JSON.stringify(userChats)); } catch (e) {
+    console.error("[bot] Не удалось сохранить user_chats:", e.message);
+  }
 }
 
 // Запоминаем соответствие id/username → chatId при любом обращении пользователя
@@ -432,17 +434,16 @@ app.post("/api/deals", auth, (req, res) => {
   };
   deals.push(deal);
   persist();
-  // Запомнить chat_id создателя и уведомить контрагента (если уже взаимодействовал с ботом)
+  // Запомнить chat_id создателя и уведомить обе стороны (контрагента — если взаимодействовал с ботом)
   registerUser(req.tgUser, req.tgUser.id);
-  const cpLabel = deal.role === "seller" ? "покупателем" : "продавцом";
-  const cpNote = deal.role === "seller"
-    ? `Ожидается оплата: <b>${deal.total} ${deal.currency}</b>`
-    : `Вам нужно передать товар / исполнить условия после оплаты`;
+  const seller = deal.role === "seller" ? req.tgUser.first_name || "создатель" : deal.counterparty;
+  const buyer  = deal.role === "buyer"  ? req.tgUser.first_name || "создатель" : deal.counterparty;
   notifyParties(deal,
     `🤝 <b>Новая сделка ${deal.id}</b>\n` +
     `📌 ${deal.title}\n\n` +
-    `Вы участвуете как ${cpLabel}.\n` +
-    `${cpNote}\n\n` +
+    `Продавец: ${seller}\n` +
+    `Покупатель: ${buyer}\n` +
+    `К оплате: <b>${deal.total} ${deal.currency}</b>\n\n` +
     `Для проверки статуса: /deal ${deal.id}`
   ).catch(() => {});
   res.json(deal);
@@ -696,8 +697,24 @@ async function setupBot() {
   console.log("[bot] Команды и описание настроены");
 }
 
-// Пользователи, ожидающие ответа поддержки (chatId → true)
-const supportMode = new Set();
+// Пользователи, ожидающие ответа поддержки. Автоматически истекает через 10 минут.
+const supportMode = new Map(); // chatId → timestamp
+
+function enterSupportMode(chatId) {
+  supportMode.set(chatId, Date.now());
+}
+
+function inSupportMode(chatId) {
+  const ts = supportMode.get(chatId);
+  if (!ts) return false;
+  if (Date.now() - ts > 10 * 60 * 1000) { supportMode.delete(chatId); return false; }
+  return true;
+}
+
+function formatUserLabel(from) {
+  return `${from.first_name}${from.last_name ? " " + from.last_name : ""}` +
+    (from.username ? ` (@${from.username})` : "") + ` [${from.id}]`;
+}
 
 async function handleUpdate(upd) {
   const msg = upd.message;
@@ -767,6 +784,12 @@ async function handleUpdate(upd) {
       new: "Ожидает оплаты", paid: "В гаранте (оплачена)", fulfilled: "Исполнена",
       completed: "Завершена", dispute: "Спор", cancelled: "Отменена"
     };
+    // Определяем, кем является текущий зритель — владельцем или контрагентом
+    const isOwner = deal.ownerId === msg.from.id;
+    // Владелец — это тот, кто создал сделку, его роль в deal.role
+    const viewerRole  = isOwner ? deal.role : (deal.role === "seller" ? "buyer" : "seller");
+    const sellerLabel = viewerRole === "seller" ? "вы" : deal.counterparty;
+    const buyerLabel  = viewerRole === "buyer"  ? "вы" : deal.counterparty;
     await tgCall("sendMessage", {
       chat_id: chatId,
       text:
@@ -775,27 +798,24 @@ async function handleUpdate(upd) {
         `Статус: <b>${stLabels[deal.status] || deal.status}</b>\n` +
         `Сумма: ${deal.amount} ${deal.currency}\n` +
         `К оплате: ${deal.total} ${deal.currency} (комиссия ${deal.feePercent}%)\n` +
-        `Продавец: ${deal.role === "seller" ? "вы" : deal.counterparty}\n` +
-        `Покупатель: ${deal.role === "buyer" ? "вы" : deal.counterparty}`,
+        `Продавец: ${sellerLabel}\n` +
+        `Покупатель: ${buyerLabel}`,
       parse_mode: "HTML",
       reply_markup: appButton("Открыть в приложении")
     });
   } else if (cmd === "/support") {
-    supportMode.add(chatId);
+    enterSupportMode(chatId);
     await tgCall("sendMessage", {
       chat_id: chatId,
       text: "Опишите ваш вопрос одним сообщением — гарант ответит вам здесь."
     });
-  } else if (supportMode.has(chatId)) {
+  } else if (inSupportMode(chatId)) {
     // Пересылаем вопрос всем гарантам
     supportMode.delete(chatId);
-    const from = msg.from;
-    const fromLabel = `${from.first_name}${from.last_name ? " " + from.last_name : ""}` +
-      (from.username ? ` (@${from.username})` : "") + ` [${from.id}]`;
     for (const adminId of ADMIN_IDS) {
       await tgCall("sendMessage", {
         chat_id: adminId,
-        text: `💬 <b>Вопрос поддержки</b>\nОт: ${fromLabel}\n\n${msg.text}`,
+        text: `💬 <b>Вопрос поддержки</b>\nОт: ${formatUserLabel(msg.from)}\n\n${msg.text}`,
         parse_mode: "HTML"
       }).catch(() => {});
     }
