@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>NORTHCAT Гарант</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div id="app">
+
+    <!-- Шапка -->
+    <header class="header">
+      <div class="user-info">
+        <div class="avatar" id="avatar">🐈‍⬛</div>
+        <div class="user-meta">
+          <span class="username" id="username">Гость</span>
+          <span class="user-role">NORTHCAT Гарант</span>
+        </div>
+      </div>
+      <div class="badge badge--safe">🛡 Сделки под защитой</div>
+    </header>
+
+    <!-- Экран: список сделок -->
+    <main class="screen screen--active" id="screen-deals">
+      <div class="screen-head">
+        <h2 class="screen-title">Мои сделки</h2>
+        <button class="primary-button primary-button--small" id="new-deal-button">+ Новая</button>
+      </div>
+
+      <div class="filter-row" id="filter-row">
+        <button class="chip chip--active" data-filter="all">Все</button>
+        <button class="chip" data-filter="active">Активные</button>
+        <button class="chip" data-filter="completed">Завершённые</button>
+        <button class="chip" data-filter="dispute">Споры</button>
+      </div>
+
+      <ul class="deal-list" id="deal-list"></ul>
+
+      <div class="empty-state" id="deals-empty">
+        <div class="empty-icon">🐈‍⬛</div>
+        <p>Пока нет сделок.<br>Создайте первую — NORTHCAT проследит за безопасностью.</p>
+      </div>
+    </main>
+
+    <!-- Экран: создание сделки -->
+    <main class="screen" id="screen-create">
+      <h2 class="screen-title">Новая сделка</h2>
+      <p class="screen-subtitle">Средства замораживаются у гаранта и выплачиваются продавцу только после подтверждения покупателем</p>
+
+      <form id="create-form" autocomplete="off">
+        <div class="field">
+          <label class="field-label">Моя роль</label>
+          <div class="segment" id="role-segment">
+            <button type="button" class="segment-item segment-item--active" data-role="seller">Я продавец</button>
+            <button type="button" class="segment-item" data-role="buyer">Я покупатель</button>
+          </div>
+        </div>
+
+        <div class="field">
+          <label class="field-label" for="counterparty">Контрагент (@username)</label>
+          <input class="input" id="counterparty" type="text" placeholder="@username" required>
+        </div>
+
+        <div class="field">
+          <label class="field-label" for="deal-title">Что продаётся</label>
+          <input class="input" id="deal-title" type="text" placeholder="Например: Telegram-канал 10k подписчиков" required maxlength="120">
+        </div>
+
+        <div class="field">
+          <label class="field-label" for="deal-terms">Условия сделки</label>
+          <textarea class="input input--area" id="deal-terms" rows="3" placeholder="Что именно передаётся, в какой срок, критерии приёмки" required maxlength="1000"></textarea>
+        </div>
+
+        <div class="field field--row">
+          <div class="field-col">
+            <label class="field-label" for="deal-amount">Сумма</label>
+            <input class="input" id="deal-amount" type="number" inputmode="decimal" min="0" step="any" placeholder="100" required>
+          </div>
+          <div class="field-col field-col--narrow">
+            <label class="field-label" for="deal-currency">Валюта</label>
+            <select class="input" id="deal-currency">
+              <option value="USDT">USDT</option>
+              <option value="TON">TON</option>
+              <option value="BTC">BTC</option>
+              <option value="RUB">RUB</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="field">
+          <label class="field-label">Способ оплаты</label>
+          <div class="pay-methods">
+            <label class="pay-method">
+              <input type="radio" name="pay-method" value="xrocket" checked>
+              <span class="pay-method-card">
+                <span class="pay-method-icon">🚀</span>
+                <span class="pay-method-name">xRocket</span>
+                <span class="pay-method-hint">крипто-счёт в Telegram</span>
+              </span>
+            </label>
+            <label class="pay-method">
+              <input type="radio" name="pay-method" value="bitpapa">
+              <span class="pay-method-card">
+                <span class="pay-method-icon">🅱️</span>
+                <span class="pay-method-name">Bitpapa</span>
+                <span class="pay-method-hint">P2P-перевод с кодом сделки</span>
+              </span>
+            </label>
+          </div>
+        </div>
+
+        <div class="fee-card" id="fee-card">
+          <div class="fee-row"><span>Сумма сделки</span><span id="fee-amount">—</span></div>
+          <div class="fee-row"><span>Комиссия гаранта (<span id="fee-percent">5</span>%)</span><span id="fee-value">—</span></div>
+          <div class="fee-row fee-row--total"><span>К оплате покупателем</span><span id="fee-total">—</span></div>
+        </div>
+
+        <button type="submit" class="primary-button">Создать сделку</button>
+        <button type="button" class="ghost-button" id="create-cancel">Отмена</button>
+      </form>
+    </main>
+
+    <!-- Экран: сделка -->
+    <main class="screen" id="screen-deal">
+      <div class="deal-header">
+        <h2 class="screen-title" id="deal-view-title">Сделка</h2>
+        <span class="status-chip" id="deal-view-status">—</span>
+      </div>
+      <div class="deal-code" id="deal-view-code">ID: —</div>
+
+      <div class="detail-card">
+        <div class="detail-row"><span>Продавец</span><span id="deal-view-seller">—</span></div>
+        <div class="detail-row"><span>Покупатель</span><span id="deal-view-buyer">—</span></div>
+        <div class="detail-row"><span>Сумма</span><span id="deal-view-amount">—</span></div>
+        <div class="detail-row"><span>Комиссия гаранта</span><span id="deal-view-fee">—</span></div>
+        <div class="detail-row"><span>К оплате</span><span id="deal-view-total">—</span></div>
+        <div class="detail-row"><span>Оплата через</span><span id="deal-view-method">—</span></div>
+      </div>
+
+      <div class="detail-card">
+        <div class="detail-label">Условия</div>
+        <div class="detail-terms" id="deal-view-terms">—</div>
+      </div>
+
+      <ol class="timeline" id="deal-timeline"></ol>
+
+      <div class="deal-actions" id="deal-actions"></div>
+      <button type="button" class="ghost-button" id="deal-back">← К списку сделок</button>
+    </main>
+
+    <!-- Экран: профиль -->
+    <main class="screen" id="screen-profile">
+      <h2 class="screen-title">Профиль</h2>
+      <div class="profile-card">
+        <div class="avatar avatar--big" id="profile-avatar">🐈‍⬛</div>
+        <div class="profile-name" id="profile-name">Гость</div>
+        <div class="profile-id" id="profile-id"></div>
+      </div>
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-value" id="stat-total">0</div>
+          <div class="stat-label">Всего сделок</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="stat-completed">0</div>
+          <div class="stat-label">Завершено</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="stat-turnover">0</div>
+          <div class="stat-label">Оборот, USDT</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="stat-fee">5%</div>
+          <div class="stat-label">Комиссия</div>
+        </div>
+      </div>
+
+      <div class="info-card">
+        <div class="info-title">Как работает гарант</div>
+        <ol class="info-list">
+          <li>Стороны договариваются об условиях и создают сделку.</li>
+          <li>Покупатель оплачивает через xRocket или Bitpapa — средства замораживаются у гаранта.</li>
+          <li>Продавец передаёт товар / выполняет условия.</li>
+          <li>Покупатель подтверждает приёмку — гарант выплачивает продавцу за вычетом комиссии.</li>
+          <li>Если возник спор — его разбирает арбитр NORTHCAT.</li>
+        </ol>
+      </div>
+
+      <button class="ghost-button" id="support-button">💬 Написать в поддержку</button>
+    </main>
+
+    <!-- Нижняя навигация -->
+    <nav class="tabbar">
+      <button class="tab tab--active" data-screen="screen-deals">
+        <span class="tab-icon">🤝</span>
+        <span class="tab-label">Сделки</span>
+      </button>
+      <button class="tab" data-screen="screen-create">
+        <span class="tab-icon">➕</span>
+        <span class="tab-label">Создать</span>
+      </button>
+      <button class="tab" data-screen="screen-profile">
+        <span class="tab-icon">👤</span>
+        <span class="tab-label">Профиль</span>
+      </button>
+    </nav>
+
+  </div>
+  <script src="js/config.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
