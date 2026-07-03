@@ -67,7 +67,7 @@ function dealAmount(amount) {
 
 function formatAmount(amount, currency) {
   const normalized = dealAmount(amount);
-  if (!Number.isFinite(normalized)) return `0 ${currency || ""}`.trim();
+  if (!Number.isFinite(normalized)) return `— ${currency || ""}`.trim();
   return `${normalized.toLocaleString("ru-RU")} ${currency || ""}`.trim();
 }
 
@@ -581,7 +581,10 @@ function appButton(text) {
 }
 
 function dealTemplateButtonText(deal) {
-  return `${String(deal.title || "Сделка").slice(0, 28)} · ${formatAmount(deal.amount, deal.currency)}`.slice(0, 64);
+  const amountText = formatAmount(deal.amount, deal.currency);
+  const reserve = Math.max(0, 64 - amountText.length - 3);
+  const title = String(deal.title || "Сделка").slice(0, reserve);
+  return `${title} · ${amountText}`.slice(0, 64);
 }
 
 function getDealTemplates(ownerId, query) {
@@ -613,7 +616,9 @@ function createDealFromTemplate(template, buyer) {
     return null;
   }
   const fee = (amount * FEE_PERCENT) / 100;
-  const buyerUsername = buyer && buyer.username ? `@${buyer.username}` : "";
+  const buyerUsername = buyer.username && String(buyer.username).trim()
+    ? `@${String(buyer.username).trim()}`
+    : "";
   const buyerLabel = buyerUsername || `ID ${buyer.id}`;
   return {
     id: "CRB-" + Date.now().toString(36).toUpperCase() + crypto.randomBytes(2).toString("hex").toUpperCase(),
@@ -673,11 +678,11 @@ async function setupBot() {
 
 async function handleInlineQuery(inline) {
   const templates = getDealTemplates(inline.from.id, inline.query);
-  const results = templates.map((deal, idx) => ({
+  const results = templates.map((deal) => ({
     type: "article",
-    id: `${deal.id}:${idx}`,
+    id: String(deal.id),
     title: deal.title,
-    description: `${formatAmount(deal.amount, deal.currency)} · ${dealTemplateButtonText(deal)}`,
+    description: String(deal.terms || "Оформление сделки через гаранта").slice(0, 90),
     input_message_content: {
       message_text:
         "📌 Объявление гаранта CRB GA\n" +
@@ -729,7 +734,7 @@ async function handleTemplateCallback(cq) {
     return;
   }
   if (!cq.from || !cq.from.id) return;
-  if (cq.from.id === template.ownerId) {
+  if (Number(cq.from.id) === Number(template.ownerId)) {
     await tgCall("answerCallbackQuery", {
       callback_query_id: cq.id,
       text: "Нельзя принять собственный шаблон.",
