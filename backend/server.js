@@ -1,5 +1,5 @@
 /**
- * NORTHCAT Гарант — бэкенд.
+ * CRB GA (гарант сделок) — бэкенд.
  *
  * Возможности:
  *  - хранение сделок (JSON-файл, для продакшена замените на БД);
@@ -301,7 +301,7 @@ app.use((req, res, next) => {
 });
 
 app.get("/api/health", (req, res) => {
-  res.json({ ok: true, service: "northcat-garant" });
+  res.json({ ok: true, service: "crb-ga-garant" });
 });
 
 // Вход через Telegram Login Widget
@@ -347,7 +347,7 @@ app.post("/api/deals", auth, (req, res) => {
   }
   const fee = (amount * FEE_PERCENT) / 100;
   const deal = {
-    id: "NC-" + Date.now().toString(36).toUpperCase() + crypto.randomBytes(2).toString("hex").toUpperCase(),
+    id: "CRB-" + Date.now().toString(36).toUpperCase() + crypto.randomBytes(2).toString("hex").toUpperCase(),
     ownerId: req.tgUser.id,
     role: b.role === "buyer" ? "buyer" : "seller",
     counterparty: String(b.counterparty).slice(0, 64),
@@ -512,7 +512,7 @@ app.post("/webhook/rukassa", gatewayWebhook("rukassa"));
 app.use(express.static(path.join(__dirname, "..")));
 
 app.listen(PORT, () => {
-  console.log(`NORTHCAT Гарант backend запущен на порту ${PORT}`);
+  console.log(`CRB GA backend запущен на порту ${PORT}`);
   if (!BOT_TOKEN) console.warn("⚠️  BOT_TOKEN не задан — авторизация работать не будет");
   if (!XROCKET_API_KEY) console.warn("⚠️  XROCKET_API_KEY не задан — счета xRocket создаваться не будут");
   if (!WEBHOOK_SECRET) console.warn("⚠️  WEBHOOK_SECRET не задан — вебхуки шлюзов отключены");

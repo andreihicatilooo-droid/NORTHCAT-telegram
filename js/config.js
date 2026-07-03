@@ -1,4 +1,4 @@
-// Конфигурация NORTHCAT Гарант
+// Конфигурация CRB GA — гарант сделок
 window.NORTHCAT_CONFIG = {
   // URL бэкенда (backend/server.js).
   // "auto" — бэкенд на том же домене (проверяется /api/health, иначе демо-режим);

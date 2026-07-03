@@ -1,4 +1,4 @@
-# 🐈‍⬛ NORTHCAT Гарант — Telegram Mini App
+# CRB GA — Telegram Mini App (гарант сделок)
 
 Гарант-сервис (эскроу) для безопасных сделок в Telegram. Приём оплаты:
 **xRocket**, **Bitpapa**, **PGon**, **NicePay**, **RuKassa**.

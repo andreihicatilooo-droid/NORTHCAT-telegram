@@ -471,7 +471,7 @@
     var fee = amount * FEE_PERCENT / 100;
 
     var deal = {
-      id: "NC-" + Date.now().toString(36).toUpperCase() + Math.random().toString(36).slice(2, 6).toUpperCase(),
+      id: "CRB-" + Date.now().toString(36).toUpperCase() + Math.random().toString(36).slice(2, 6).toUpperCase(),
       title: $("deal-title").value.trim(),
       terms: $("deal-terms").value.trim(),
       amount: amount,
