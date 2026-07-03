@@ -2,19 +2,36 @@
   "use strict";
 
   var CFG = window.NORTHCAT_CONFIG || {};
-  var API_URL = (CFG.API_URL || "").replace(/\/+$/, "");
   var FEE_PERCENT = CFG.FEE_PERCENT != null ? CFG.FEE_PERCENT : 5;
-  var DEMO = !API_URL;
+  var METHODS = CFG.PAY_METHODS || [];
+
+  // API_URL: "" — демо; "auto" — тот же домен (если бэкенд отвечает); иначе адрес бэкенда
+  var API_BASE = "";
+  var apiAvailable = false;
+
+  function resolveApi() {
+    var raw = (CFG.API_URL || "").replace(/\/+$/, "");
+    if (!raw) return Promise.resolve(false);
+    API_BASE = raw === "auto" ? "" : raw;
+    return fetch(API_BASE + "/api/health", { method: "GET" })
+      .then(function (r) { return r.ok; })
+      .catch(function () { return false; });
+  }
+
+  // Демо-режим: бэкенда нет или пользователь вошёл как гость
+  function isDemo() {
+    return !apiAvailable || (user && user.demo);
+  }
 
   var tg = window.Telegram && window.Telegram.WebApp;
-  var user = tg && tg.initDataUnsafe && tg.initDataUnsafe.user;
 
-  var STORAGE_KEY = "northcat_deals_v1";
+  var STORAGE_DEALS = "northcat_deals_v1";
+  var STORAGE_AUTH = "northcat_auth_v1";
 
   var STATUS = {
     new:       { label: "Ожидает оплаты", cls: "status--new" },
-    paid:      { label: "Оплачена, в гаранте", cls: "status--paid" },
-    fulfilled: { label: "Выполнена продавцом", cls: "status--fulfilled" },
+    paid:      { label: "В гаранте", cls: "status--paid" },
+    fulfilled: { label: "Исполнена", cls: "status--fulfilled" },
     completed: { label: "Завершена", cls: "status--completed" },
     dispute:   { label: "Спор", cls: "status--dispute" },
     cancelled: { label: "Отменена", cls: "status--cancelled" }
@@ -22,8 +39,8 @@
 
   var TIMELINE_STEPS = [
     { status: "new",       label: "Сделка создана" },
-    { status: "paid",      label: "Покупатель оплатил — средства у гаранта" },
-    { status: "fulfilled", label: "Продавец выполнил условия" },
+    { status: "paid",      label: "Оплата получена — средства заблокированы у гаранта" },
+    { status: "fulfilled", label: "Продавец исполнил условия" },
     { status: "completed", label: "Приёмка подтверждена — выплата продавцу" }
   ];
 
@@ -31,6 +48,9 @@
   var currentFilter = "all";
   var currentDealId = null;
   var createRole = "seller";
+
+  var user = null;       // { id, first_name, last_name?, username?, photo_url? }
+  var authToken = null;  // токен сессии для входа через Login Widget
 
   /* ---------- Telegram init ---------- */
 
@@ -52,18 +72,130 @@
     }
   }
 
+  /* ---------- Авторизация ---------- */
+
+  function getStoredAuth() {
+    try {
+      return JSON.parse(localStorage.getItem(STORAGE_AUTH));
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function setAuth(u, token) {
+    user = u;
+    authToken = token || null;
+    localStorage.setItem(STORAGE_AUTH, JSON.stringify({ user: u, token: authToken }));
+    $("screen-auth").hidden = true;
+    $("logout-button").hidden = false;
+    renderUser();
+    loadDeals();
+  }
+
+  function initAuth() {
+    // 1. Запуск внутри Telegram — авторизация по initData
+    var tgUser = tg && tg.initDataUnsafe && tg.initDataUnsafe.user;
+    if (tgUser) {
+      user = tgUser;
+      renderUser();
+      loadDeals();
+      return;
+    }
+
+    // 2. Сохранённая сессия (вход через Login Widget или демо)
+    var stored = getStoredAuth();
+    if (stored && stored.user) {
+      user = stored.user;
+      authToken = stored.token || null;
+      $("logout-button").hidden = false;
+      renderUser();
+      loadDeals();
+      return;
+    }
+
+    // 3. Браузер без сессии — экран входа
+    showAuthScreen();
+  }
+
+  function showAuthScreen() {
+    $("screen-auth").hidden = false;
+
+    // Telegram Login Widget (нужен BOT_USERNAME и /setdomain у @BotFather)
+    if (CFG.BOT_USERNAME && !$("tg-login-widget").hasChildNodes()) {
+      window.onTelegramAuth = function (widgetUser) {
+        if (isDemo()) {
+          setAuth(widgetUser, null);
+          return;
+        }
+        // Бэкенд проверяет подпись виджета и выдаёт токен сессии
+        fetch(API_BASE + "/api/auth/telegram", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(widgetUser)
+        }).then(function (r) { return r.json(); }).then(function (res) {
+          if (res && res.token) setAuth(res.user, res.token);
+          else showAlert("Не удалось подтвердить вход через Telegram.");
+        }).catch(function () {
+          showAlert("Ошибка входа. Попробуйте позже.");
+        });
+      };
+      var s = document.createElement("script");
+      s.src = "https://telegram.org/js/telegram-widget.js?22";
+      s.setAttribute("data-telegram-login", CFG.BOT_USERNAME);
+      s.setAttribute("data-size", "medium");
+      s.setAttribute("data-radius", "8");
+      s.setAttribute("data-onauth", "onTelegramAuth(user)");
+      s.setAttribute("data-request-access", "write");
+      $("tg-login-widget").appendChild(s);
+    }
+  }
+
+  $("guest-login").addEventListener("click", function () {
+    setAuth({ id: 0, first_name: "Гость", demo: true }, null);
+  });
+
+  $("logout-button").addEventListener("click", function () {
+    localStorage.removeItem(STORAGE_AUTH);
+    location.reload();
+  });
+
   function myUsername() {
     if (user && user.username) return "@" + user.username;
     if (user) return user.first_name || "Я";
     return "Я";
   }
 
+  function renderUser() {
+    if (!user) return;
+    var name = user.first_name + (user.last_name ? " " + user.last_name : "");
+    $("username").textContent = name;
+    $("profile-name").textContent = name;
+    $("profile-id").textContent = user.demo
+      ? "Демо-режим"
+      : (user.username ? "@" + user.username + " · " : "") + "ID " + user.id;
+
+    var initials = (user.first_name || "N").slice(0, 1).toUpperCase() +
+      (user.last_name ? user.last_name.slice(0, 1).toUpperCase() : "");
+    ["avatar", "profile-avatar"].forEach(function (id) {
+      var el = $(id);
+      if (user.photo_url) {
+        el.innerHTML = "";
+        var img = document.createElement("img");
+        img.src = user.photo_url;
+        img.alt = "";
+        el.appendChild(img);
+      } else {
+        el.textContent = initials || "NC";
+      }
+    });
+  }
+
   /* ---------- Хранилище ---------- */
 
   function loadDeals() {
-    if (DEMO) {
+    if (isDemo()) {
       try {
-        deals = JSON.parse(localStorage.getItem(STORAGE_KEY)) || [];
+        deals = JSON.parse(localStorage.getItem(STORAGE_DEALS)) || [];
       } catch (e) {
         deals = [];
       }
@@ -81,18 +213,18 @@
   }
 
   function saveDeals() {
-    if (DEMO) {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(deals));
+    if (isDemo()) {
+      localStorage.setItem(STORAGE_DEALS, JSON.stringify(deals));
     }
   }
 
   function api(method, path, body) {
-    return fetch(API_URL + path, {
+    var headers = { "Content-Type": "application/json" };
+    if (tg && tg.initData) headers["X-Telegram-Init-Data"] = tg.initData;
+    if (authToken) headers["X-Auth-Token"] = authToken;
+    return fetch(API_BASE + path, {
       method: method,
-      headers: {
-        "Content-Type": "application/json",
-        "X-Telegram-Init-Data": tg ? tg.initData : ""
-      },
+      headers: headers,
       body: body ? JSON.stringify(body) : undefined
     }).then(function (res) {
       if (!res.ok) throw new Error("HTTP " + res.status);
@@ -103,6 +235,13 @@
   /* ---------- Утилиты ---------- */
 
   function $(id) { return document.getElementById(id); }
+
+  function methodById(id) {
+    for (var i = 0; i < METHODS.length; i++) {
+      if (METHODS[i].id === id) return METHODS[i];
+    }
+    return { id: id, name: id, kind: "manual", mark: "—" };
+  }
 
   function fmt(n, currency) {
     var v = Math.round(n * 100) / 100;
@@ -125,6 +264,11 @@
     } else if (confirm(msg)) {
       cb();
     }
+  }
+
+  function openExternal(link) {
+    if (tg && tg.openLink) tg.openLink(link);
+    else window.open(link, "_blank");
   }
 
   function findDeal(id) {
@@ -203,7 +347,7 @@
         var bottom = document.createElement("div");
         bottom.className = "deal-item-bottom";
         var meta = document.createElement("span");
-        meta.textContent = (deal.role === "seller" ? "Продаю → " : "Покупаю ← ") + deal.counterparty;
+        meta.textContent = (deal.role === "seller" ? "Продажа · " : "Покупка · ") + deal.counterparty;
         var amount = document.createElement("span");
         amount.className = "deal-item-amount";
         amount.textContent = fmt(deal.amount, deal.currency);
@@ -232,6 +376,46 @@
   });
 
   /* ---------- Создание сделки ---------- */
+
+  function renderPayMethods() {
+    var box = $("pay-methods");
+    box.innerHTML = "";
+    METHODS.forEach(function (m, i) {
+      var label = document.createElement("label");
+      label.className = "pay-method";
+
+      var input = document.createElement("input");
+      input.type = "radio";
+      input.name = "pay-method";
+      input.value = m.id;
+      if (i === 0) input.checked = true;
+
+      var card = document.createElement("span");
+      card.className = "pay-method-card";
+
+      var mark = document.createElement("span");
+      mark.className = "pay-method-mark";
+      mark.textContent = m.mark || m.name.slice(0, 2).toUpperCase();
+
+      var body = document.createElement("span");
+      body.className = "pay-method-body";
+      var name = document.createElement("span");
+      name.className = "pay-method-name";
+      name.textContent = m.name;
+      var hint = document.createElement("span");
+      hint.className = "pay-method-hint";
+      hint.textContent = m.hint || "";
+      body.appendChild(name);
+      body.appendChild(document.createElement("br"));
+      body.appendChild(hint);
+
+      card.appendChild(mark);
+      card.appendChild(body);
+      label.appendChild(input);
+      label.appendChild(card);
+      box.appendChild(label);
+    });
+  }
 
   $("new-deal-button").addEventListener("click", function () {
     haptic("light");
@@ -282,7 +466,8 @@
       return;
     }
 
-    var method = document.querySelector('input[name="pay-method"]:checked').value;
+    var checked = document.querySelector('input[name="pay-method"]:checked');
+    var method = checked ? checked.value : METHODS[0].id;
     var fee = amount * FEE_PERCENT / 100;
 
     var deal = {
@@ -302,7 +487,7 @@
       history: [{ status: "new", ts: Date.now() }]
     };
 
-    if (DEMO) {
+    if (isDemo()) {
       deals.push(deal);
       saveDeals();
       afterCreate(deal);
@@ -319,11 +504,12 @@
   function afterCreate(deal) {
     haptic("success");
     $("create-form").reset();
+    renderPayMethods();
     recalcFee();
     renderDeals();
     renderStats();
     openDeal(deal.id);
-    showAlert("Сделка " + deal.id + " создана. Отправьте её ID контрагенту (" + deal.counterparty + ") и дождитесь оплаты.");
+    showAlert("Сделка " + deal.id + " создана. Передайте её ID контрагенту (" + deal.counterparty + ").");
   }
 
   /* ---------- Экран сделки ---------- */
@@ -338,7 +524,7 @@
     var chip = $("deal-view-status");
     chip.textContent = st.label;
     chip.className = "status-chip " + st.cls;
-    $("deal-view-code").textContent = "ID: " + deal.id;
+    $("deal-view-code").textContent = "ID " + deal.id;
 
     var seller = deal.role === "seller" ? myUsername() : deal.counterparty;
     var buyer = deal.role === "buyer" ? myUsername() : deal.counterparty;
@@ -347,7 +533,7 @@
     $("deal-view-amount").textContent = fmt(deal.amount, deal.currency);
     $("deal-view-fee").textContent = fmt(deal.fee, deal.currency) + " (" + deal.feePercent + "%)";
     $("deal-view-total").textContent = fmt(deal.total, deal.currency);
-    $("deal-view-method").textContent = deal.method === "xrocket" ? "🚀 xRocket" : "🅱️ Bitpapa";
+    $("deal-view-method").textContent = methodById(deal.method).name;
     $("deal-view-terms").textContent = deal.terms;
 
     renderTimeline(deal);
@@ -408,7 +594,7 @@
     function button(label, cls, handler) {
       var b = document.createElement("button");
       b.type = "button";
-      b.className = "primary-button " + (cls || "");
+      b.className = "btn " + (cls || "btn--primary");
       b.textContent = label;
       b.addEventListener("click", handler);
       box.appendChild(b);
@@ -427,13 +613,13 @@
     switch (deal.status) {
       case "new":
         if (!isSeller) {
-          button(deal.method === "xrocket" ? "🚀 Оплатить через xRocket" : "🅱️ Оплатить через Bitpapa", "", function () {
+          button("Оплатить через " + methodById(deal.method).name, "btn--primary", function () {
             payDeal(deal);
           });
         } else {
-          note("Ожидаем оплату от покупателя " + deal.counterparty + ". Средства будут заморожены у гаранта.");
+          note("Ожидается оплата от покупателя " + deal.counterparty + ". Средства будут заблокированы у гаранта.");
         }
-        button("Отменить сделку", "primary-button--red", function () {
+        button("Отменить сделку", "btn--danger", function () {
           showConfirm("Отменить сделку " + deal.id + "?", function () {
             setStatus(deal, "cancelled");
           });
@@ -442,16 +628,16 @@
 
       case "paid":
         if (isSeller) {
-          button("✅ Я выполнил условия сделки", "primary-button--green", function () {
-            showConfirm("Подтвердить, что товар передан / условия выполнены?", function () {
+          button("Условия исполнены", "btn--green", function () {
+            showConfirm("Подтвердить, что товар передан и условия исполнены?", function () {
               setStatus(deal, "fulfilled");
             });
           });
         } else {
-          note("Оплата у гаранта. Ожидайте выполнения условий продавцом.");
+          note("Оплата заблокирована у гаранта. Ожидается исполнение условий продавцом.");
         }
-        button("⚠️ Открыть спор", "primary-button--red", function () {
-          showConfirm("Открыть спор по сделке? Арбитр изучит переписку и условия.", function () {
+        button("Открыть спор", "btn--danger", function () {
+          showConfirm("Открыть спор по сделке? Арбитр изучит условия и переписку.", function () {
             setStatus(deal, "dispute");
           });
         });
@@ -459,15 +645,15 @@
 
       case "fulfilled":
         if (!isSeller) {
-          button("✅ Подтвердить приёмку — выплатить продавцу", "primary-button--green", function () {
+          button("Подтвердить приёмку", "btn--green", function () {
             showConfirm("Подтвердить приёмку? Гарант выплатит продавцу " + fmt(deal.amount, deal.currency) + ".", function () {
               setStatus(deal, "completed");
             });
           });
         } else {
-          note("Ожидаем подтверждение приёмки покупателем. После подтверждения гарант выплатит вам " + fmt(deal.amount, deal.currency) + ".");
+          note("Ожидается подтверждение приёмки покупателем. После подтверждения гарант выплатит " + fmt(deal.amount, deal.currency) + ".");
         }
-        button("⚠️ Открыть спор", "primary-button--red", function () {
+        button("Открыть спор", "btn--danger", function () {
           showConfirm("Открыть спор по сделке?", function () {
             setStatus(deal, "dispute");
           });
@@ -475,53 +661,51 @@
         break;
 
       case "dispute":
-        note("Спор рассматривает арбитр NORTHCAT. Подготовьте переписку и доказательства.");
-        button("💬 Связаться с арбитром", "", function () {
+        note("Спор рассматривает арбитр. Подготовьте переписку и доказательства.");
+        button("Связаться с арбитром", "btn--outline", function () {
           openSupport();
         });
         break;
 
       case "completed":
-        note("Сделка успешно завершена. Спасибо, что пользуетесь NORTHCAT Гарант!");
+        note("Сделка завершена.");
         break;
 
       case "cancelled":
-        note("Сделка отменена." + (historyTs(deal, "paid") ? " Если оплата уже прошла — средства вернёт гарант." : ""));
+        note("Сделка отменена." + (historyTs(deal, "paid") ? " Внесённые средства возвращает гарант." : ""));
         break;
     }
 
-    // Демо-режим: кнопка симуляции действий контрагента, чтобы прощёлкать весь флоу
-    if (DEMO && (deal.status === "new" || deal.status === "paid" || deal.status === "fulfilled")) {
+    // Демо-режим: симуляция действий контрагента для проверки флоу
+    if (isDemo() && (deal.status === "new" || deal.status === "paid" || deal.status === "fulfilled")) {
       var simLabel = {
         new: "Демо: контрагент оплатил",
-        paid: "Демо: продавец выполнил условия",
+        paid: "Демо: продавец исполнил условия",
         fulfilled: "Демо: покупатель подтвердил приёмку"
       }[deal.status];
       var next = { new: "paid", paid: "fulfilled", fulfilled: "completed" }[deal.status];
-      // показываем только то действие, которое недоступно текущей роли
       var ownAction =
         (deal.status === "new" && !isSeller) ||
         (deal.status === "paid" && isSeller) ||
         (deal.status === "fulfilled" && !isSeller);
       if (!ownAction) {
-        var b = button(simLabel, "", function () { setStatus(deal, next); });
-        b.style.opacity = "0.7";
+        button(simLabel, "btn--outline", function () { setStatus(deal, next); });
       }
     }
   }
 
   function setStatus(deal, status) {
     function apply() {
-      deal.status = status;
-      deal.history = deal.history || [];
-      deal.history.push({ status: status, ts: Date.now() });
       saveDeals();
       haptic(status === "dispute" || status === "cancelled" ? "warning" : "success");
       renderDeals();
       renderStats();
       openDeal(deal.id);
     }
-    if (DEMO) {
+    if (isDemo()) {
+      deal.status = status;
+      deal.history = deal.history || [];
+      deal.history.push({ status: status, ts: Date.now() });
       apply();
     } else {
       api("POST", "/api/deals/" + deal.id + "/status", { status: status }).then(function (saved) {
@@ -538,44 +722,46 @@
 
   function payDeal(deal) {
     haptic("medium");
+    var m = methodById(deal.method);
 
-    if (deal.method === "xrocket") {
-      if (DEMO) {
-        showConfirm(
-          "Демо-режим: будет симулирована оплата " + fmt(deal.total, deal.currency) +
-          " через xRocket. В боевом режиме откроется счёт Rocket Pay.",
-          function () { setStatus(deal, "paid"); }
-        );
-        return;
+    // Bitpapa и другие ручные переводы: реквизиты + код сделки
+    if (m.kind === "manual") {
+      var msg =
+        "Оплата через " + m.name + ":\n\n" +
+        "1. Переведите " + fmt(deal.total, deal.currency) + " на аккаунт @" + (CFG.BITPAPA_ACCOUNT || "гаранта") + ".\n" +
+        "2. В комментарии укажите код сделки: " + deal.id + "\n" +
+        "3. После проверки перевода гарант отметит сделку оплаченной.";
+      if (isDemo()) {
+        showConfirm(msg + "\n\nДемо-режим: отметить сделку оплаченной?", function () {
+          setStatus(deal, "paid");
+        });
+      } else {
+        showAlert(msg);
+        api("POST", "/api/deals/" + deal.id + "/bitpapa-claim", {}).catch(function () { /* необязательно */ });
       }
-      // Боевой режим: бэкенд создаёт счёт через xRocket Pay API и возвращает ссылку
-      api("POST", "/api/deals/" + deal.id + "/invoice", {}).then(function (res) {
-        if (res && res.link) {
-          if (tg && tg.openTelegramLink) tg.openTelegramLink(res.link);
-          else window.open(res.link, "_blank");
-        } else {
-          showAlert("Не удалось создать счёт xRocket.");
-        }
-      }).catch(function () {
-        showAlert("Не удалось создать счёт xRocket. Попробуйте позже.");
-      });
       return;
     }
 
-    // Bitpapa: перевод с кодом сделки, зачисление подтверждает гарант
-    var msg =
-      "Оплата через Bitpapa:\n\n" +
-      "1. Переведите " + fmt(deal.total, deal.currency) + " пользователю @" + (CFG.BITPAPA_ACCOUNT || "гаранту") + " на Bitpapa.\n" +
-      "2. В комментарии укажите код сделки: " + deal.id + "\n" +
-      "3. После проверки перевода гарант отметит сделку оплаченной.";
-    if (DEMO) {
-      showConfirm(msg + "\n\nДемо-режим: отметить сделку оплаченной?", function () {
-        setStatus(deal, "paid");
-      });
-    } else {
-      showAlert(msg);
-      api("POST", "/api/deals/" + deal.id + "/bitpapa-claim", {}).catch(function () { /* необязательно */ });
+    // xRocket (счёт в Telegram) и шлюзы PGon / NicePay / RuKassa (ссылка на оплату)
+    if (isDemo()) {
+      showConfirm(
+        "Демо-режим: будет симулирована оплата " + fmt(deal.total, deal.currency) +
+        " через " + m.name + ". В боевом режиме откроется страница оплаты.",
+        function () { setStatus(deal, "paid"); }
+      );
+      return;
     }
+
+    api("POST", "/api/deals/" + deal.id + "/invoice", {}).then(function (res) {
+      if (res && res.link) {
+        if (m.kind === "telegram" && tg && tg.openTelegramLink) tg.openTelegramLink(res.link);
+        else openExternal(res.link);
+      } else {
+        showAlert("Не удалось создать счёт " + m.name + ".");
+      }
+    }).catch(function () {
+      showAlert("Не удалось создать счёт " + m.name + ". Попробуйте позже.");
+    });
   }
 
   /* ---------- Профиль и статистика ---------- */
@@ -601,27 +787,12 @@
   $("support-button").addEventListener("click", openSupport);
   $("deal-back").addEventListener("click", function () { showScreen("screen-deals"); });
 
-  /* ---------- Инициализация пользователя ---------- */
+  /* ---------- Инициализация ---------- */
 
-  function initUser() {
-    if (!user) return;
-    var name = user.first_name + (user.last_name ? " " + user.last_name : "");
-    $("username").textContent = name;
-    $("profile-name").textContent = name;
-    $("profile-id").textContent = (user.username ? "@" + user.username + " · " : "") + "ID " + user.id;
-    if (user.photo_url) {
-      ["avatar", "profile-avatar"].forEach(function (id) {
-        var el = $(id);
-        el.innerHTML = "";
-        var img = document.createElement("img");
-        img.src = user.photo_url;
-        img.alt = "";
-        el.appendChild(img);
-      });
-    }
-  }
-
-  initUser();
+  renderPayMethods();
   recalcFee();
-  loadDeals();
+  resolveApi().then(function (ok) {
+    apiAvailable = ok;
+    initAuth();
+  });
 })();

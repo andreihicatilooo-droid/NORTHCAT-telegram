@@ -1,15 +1,16 @@
 :root {
-  --bg: var(--tg-theme-bg-color, #0b1020);
-  --bg-secondary: var(--tg-theme-secondary-bg-color, #141b33);
-  --text: var(--tg-theme-text-color, #eef2ff);
-  --hint: var(--tg-theme-hint-color, #8b93ad);
-  --accent: var(--tg-theme-button-color, #4f8cff);
-  --accent-text: var(--tg-theme-button-text-color, #ffffff);
-  --green: #2ecc71;
-  --yellow: #f5b041;
-  --red: #ff6b6b;
-  --violet: #a06bff;
-  --radius: 16px;
+  --bg: #0c0e12;
+  --surface: #12151c;
+  --surface-2: #171b24;
+  --border: #232936;
+  --text: #e8ebf2;
+  --hint: #8a92a6;
+  --accent: #3e6ce0;
+  --accent-hover: #345cc4;
+  --green: #3d9a63;
+  --yellow: #b8862f;
+  --red: #c05252;
+  --radius: 8px;
 }
 
 * {
@@ -24,9 +25,11 @@ html, body {
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   background: var(--bg);
   color: var(--text);
+  font-size: 14px;
+  line-height: 1.45;
   user-select: none;
   -webkit-user-select: none;
 }
@@ -39,13 +42,77 @@ body {
   padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left);
 }
 
-/* Шапка */
+/* ---------- Авторизация ---------- */
+
+.auth-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: var(--bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.auth-overlay[hidden] {
+  display: none;
+}
+
+.auth-card {
+  width: 100%;
+  max-width: 360px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: 32px 24px;
+  text-align: center;
+}
+
+.auth-logo {
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: 0.18em;
+}
+
+.auth-tagline {
+  color: var(--hint);
+  font-size: 13px;
+  margin-top: 6px;
+}
+
+.auth-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 20px 0;
+}
+
+.auth-widget {
+  display: flex;
+  justify-content: center;
+  min-height: 0;
+  margin-bottom: 10px;
+}
+
+.auth-widget:empty {
+  display: none;
+}
+
+.auth-hint {
+  color: var(--hint);
+  font-size: 12px;
+  margin-top: 14px;
+}
+
+/* ---------- Шапка ---------- */
+
 .header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
   padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
 
@@ -57,14 +124,18 @@ body {
 }
 
 .avatar {
-  width: 40px;
-  height: 40px;
+  width: 38px;
+  height: 38px;
   border-radius: 50%;
-  background: linear-gradient(135deg, #4f8cff, #a06bff);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 20px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--hint);
   overflow: hidden;
   flex-shrink: 0;
 }
@@ -76,9 +147,9 @@ body {
 }
 
 .avatar--big {
-  width: 72px;
-  height: 72px;
-  font-size: 36px;
+  width: 68px;
+  height: 68px;
+  font-size: 20px;
   margin: 0 auto;
 }
 
@@ -90,36 +161,38 @@ body {
 
 .username {
   font-weight: 600;
-  font-size: 15px;
+  font-size: 14px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .user-role {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--hint);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
 }
 
 .badge {
   font-size: 11px;
   font-weight: 600;
-  border-radius: 999px;
-  padding: 6px 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--hint);
+  padding: 5px 10px;
   white-space: nowrap;
 }
 
-.badge--safe {
-  background: rgba(46, 204, 113, 0.12);
-  color: var(--green);
-}
+/* ---------- Экраны ---------- */
 
-/* Экраны */
 .screen {
   display: none;
   flex: 1;
   flex-direction: column;
-  padding: 8px 16px 24px;
+  padding: 16px 16px 24px;
   overflow-y: auto;
 }
 
@@ -131,22 +204,22 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 12px;
+  margin-bottom: 14px;
 }
 
 .screen-title {
-  font-size: 22px;
+  font-size: 19px;
   font-weight: 700;
 }
 
 .screen-subtitle {
   color: var(--hint);
   font-size: 13px;
-  line-height: 1.45;
-  margin: 6px 0 16px;
+  margin: 6px 0 18px;
 }
 
-/* Фильтры */
+/* ---------- Фильтры ---------- */
+
 .filter-row {
   display: flex;
   gap: 8px;
@@ -161,36 +234,42 @@ body {
 }
 
 .chip {
-  border: none;
-  border-radius: 999px;
-  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: none;
   color: var(--hint);
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
-  padding: 8px 14px;
+  padding: 7px 12px;
   cursor: pointer;
   white-space: nowrap;
   font-family: inherit;
 }
 
 .chip--active {
-  background: var(--accent);
-  color: var(--accent-text);
+  border-color: var(--accent);
+  color: var(--text);
 }
 
-/* Список сделок */
+/* ---------- Список сделок ---------- */
+
 .deal-list {
   list-style: none;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
 }
 
 .deal-item {
-  background: var(--bg-secondary);
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 14px;
+  padding: 13px 14px;
   cursor: pointer;
+}
+
+.deal-item:active {
+  background: var(--surface-2);
 }
 
 .deal-item-top {
@@ -213,34 +292,41 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-top: 8px;
-  font-size: 13px;
+  margin-top: 7px;
+  font-size: 12px;
   color: var(--hint);
 }
 
 .deal-item-amount {
   font-weight: 700;
+  font-size: 13px;
   color: var(--text);
+  font-variant-numeric: tabular-nums;
 }
 
-/* Статусы */
+/* ---------- Статусы ---------- */
+
 .status-chip {
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 700;
-  border-radius: 999px;
-  padding: 4px 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  border-radius: 4px;
+  border: 1px solid;
+  padding: 3px 7px;
   white-space: nowrap;
   flex-shrink: 0;
 }
 
-.status--new       { background: rgba(79, 140, 255, 0.15); color: #6ea3ff; }
-.status--paid      { background: rgba(245, 176, 65, 0.15); color: var(--yellow); }
-.status--fulfilled { background: rgba(160, 107, 255, 0.15); color: var(--violet); }
-.status--completed { background: rgba(46, 204, 113, 0.15); color: var(--green); }
-.status--dispute   { background: rgba(255, 107, 107, 0.15); color: var(--red); }
-.status--cancelled { background: rgba(139, 147, 173, 0.15); color: var(--hint); }
+.status--new       { color: #6d8fdd; border-color: rgba(109, 143, 221, 0.4); }
+.status--paid      { color: var(--yellow); border-color: rgba(184, 134, 47, 0.4); }
+.status--fulfilled { color: #8f7fd0; border-color: rgba(143, 127, 208, 0.4); }
+.status--completed { color: var(--green); border-color: rgba(61, 154, 99, 0.4); }
+.status--dispute   { color: var(--red); border-color: rgba(192, 82, 82, 0.4); }
+.status--cancelled { color: var(--hint); border-color: var(--border); }
 
-/* Пустое состояние */
+/* ---------- Пустое состояние ---------- */
+
 .empty-state {
   display: none;
   flex: 1;
@@ -249,9 +335,8 @@ body {
   justify-content: center;
   text-align: center;
   color: var(--hint);
-  font-size: 14px;
-  line-height: 1.5;
-  gap: 10px;
+  font-size: 13px;
+  gap: 8px;
   padding: 40px 20px;
 }
 
@@ -259,11 +344,13 @@ body {
   display: flex;
 }
 
-.empty-icon {
-  font-size: 48px;
+.empty-mark {
+  font-size: 24px;
+  color: var(--border);
 }
 
-/* Форма */
+/* ---------- Форма ---------- */
+
 .field {
   margin-bottom: 14px;
 }
@@ -278,26 +365,28 @@ body {
 }
 
 .field-col--narrow {
-  flex: 0 0 110px;
+  flex: 0 0 108px;
 }
 
 .field-label {
   display: block;
-  font-size: 13px;
+  font-size: 11px;
   font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
   color: var(--hint);
   margin-bottom: 6px;
 }
 
 .input {
   width: 100%;
-  border: 1px solid transparent;
-  border-radius: 12px;
-  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
   color: var(--text);
-  font-size: 15px;
+  font-size: 14px;
   font-family: inherit;
-  padding: 12px 14px;
+  padding: 11px 12px;
   outline: none;
 }
 
@@ -313,41 +402,45 @@ select.input {
   appearance: none;
 }
 
-/* Сегмент роли */
+/* ---------- Сегмент роли ---------- */
+
 .segment {
   display: flex;
-  background: var(--bg-secondary);
-  border-radius: 12px;
-  padding: 4px;
-  gap: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
 }
 
 .segment-item {
   flex: 1;
   border: none;
-  border-radius: 9px;
   background: none;
   color: var(--hint);
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
   font-family: inherit;
   padding: 10px 0;
   cursor: pointer;
 }
 
-.segment-item--active {
-  background: var(--accent);
-  color: var(--accent-text);
+.segment-item + .segment-item {
+  border-left: 1px solid var(--border);
 }
 
-/* Способы оплаты */
+.segment-item--active {
+  background: var(--accent);
+  color: #fff;
+}
+
+/* ---------- Способы оплаты ---------- */
+
 .pay-methods {
   display: flex;
-  gap: 10px;
+  flex-direction: column;
+  gap: 6px;
 }
 
 .pay-method {
-  flex: 1;
   cursor: pointer;
 }
 
@@ -357,40 +450,60 @@ select.input {
 
 .pay-method-card {
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 2px;
-  background: var(--bg-secondary);
-  border: 1px solid transparent;
+  gap: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 14px 8px;
-  text-align: center;
+  padding: 11px 12px;
 }
 
 .pay-method input:checked + .pay-method-card {
   border-color: var(--accent);
-  background: rgba(79, 140, 255, 0.1);
 }
 
-.pay-method-icon {
-  font-size: 24px;
+.pay-method-mark {
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  color: var(--hint);
+  flex-shrink: 0;
+}
+
+.pay-method input:checked + .pay-method-card .pay-method-mark {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+.pay-method-body {
+  min-width: 0;
 }
 
 .pay-method-name {
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 700;
 }
 
 .pay-method-hint {
   font-size: 11px;
   color: var(--hint);
+  margin-top: 1px;
 }
 
-/* Комиссия */
+/* ---------- Комиссия ---------- */
+
 .fee-card {
-  background: var(--bg-secondary);
+  border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 14px;
+  background: var(--surface);
+  padding: 12px 14px;
   margin-bottom: 16px;
 }
 
@@ -399,69 +512,79 @@ select.input {
   justify-content: space-between;
   font-size: 13px;
   color: var(--hint);
-  padding: 4px 0;
+  padding: 3px 0;
+  font-variant-numeric: tabular-nums;
 }
 
 .fee-row--total {
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 700;
   color: var(--text);
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
-  margin-top: 6px;
-  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  margin-top: 7px;
+  padding-top: 9px;
 }
 
-/* Кнопки */
-.primary-button {
+/* ---------- Кнопки ---------- */
+
+.btn {
   width: 100%;
-  border: none;
   border-radius: var(--radius);
-  background: var(--accent);
-  color: var(--accent-text);
-  font-size: 15px;
-  font-weight: 700;
+  font-size: 14px;
+  font-weight: 600;
   font-family: inherit;
-  padding: 15px;
+  padding: 13px;
   cursor: pointer;
 }
 
-.primary-button:disabled {
+.btn--primary {
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+
+.btn--primary:active {
+  background: var(--accent-hover);
+}
+
+.btn--primary:disabled {
   opacity: 0.5;
   cursor: default;
 }
 
-.primary-button--small {
+.btn--small {
   width: auto;
-  padding: 9px 16px;
-  font-size: 13px;
-  border-radius: 999px;
+  padding: 8px 14px;
+  font-size: 12px;
 }
 
-.primary-button--green {
+.btn--green {
+  border: 1px solid var(--green);
   background: var(--green);
   color: #fff;
 }
 
-.primary-button--red {
-  background: rgba(255, 107, 107, 0.15);
+.btn--danger {
+  border: 1px solid rgba(192, 82, 82, 0.5);
+  background: none;
   color: var(--red);
 }
 
-.ghost-button {
-  width: 100%;
-  border: none;
-  border-radius: var(--radius);
+.btn--outline {
+  border: 1px solid var(--border);
   background: none;
-  color: var(--hint);
-  font-size: 14px;
-  font-weight: 600;
-  font-family: inherit;
-  padding: 14px;
-  cursor: pointer;
-  margin-top: 8px;
+  color: var(--text);
 }
 
-/* Детали сделки */
+.btn--ghost {
+  border: none;
+  background: none;
+  color: var(--hint);
+  margin-top: 6px;
+}
+
+/* ---------- Детали сделки ---------- */
+
 .deal-header {
   display: flex;
   align-items: center;
@@ -470,24 +593,26 @@ select.input {
 }
 
 .deal-code {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--hint);
+  letter-spacing: 0.04em;
   margin: 4px 0 14px;
 }
 
 .detail-card {
-  background: var(--bg-secondary);
+  border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 14px;
-  margin-bottom: 12px;
+  background: var(--surface);
+  padding: 12px 14px;
+  margin-bottom: 10px;
 }
 
 .detail-row {
   display: flex;
   justify-content: space-between;
   gap: 12px;
-  font-size: 14px;
-  padding: 6px 0;
+  font-size: 13px;
+  padding: 5px 0;
 }
 
 .detail-row span:first-child {
@@ -499,33 +624,36 @@ select.input {
   font-weight: 600;
   text-align: right;
   word-break: break-word;
+  font-variant-numeric: tabular-nums;
 }
 
 .detail-label {
-  font-size: 13px;
+  font-size: 11px;
   font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
   color: var(--hint);
   margin-bottom: 6px;
 }
 
 .detail-terms {
-  font-size: 14px;
-  line-height: 1.5;
+  font-size: 13px;
   white-space: pre-wrap;
   word-break: break-word;
 }
 
-/* Таймлайн */
+/* ---------- Таймлайн ---------- */
+
 .timeline {
   list-style: none;
-  margin: 4px 0 16px;
+  margin: 6px 0 16px;
   padding-left: 4px;
 }
 
 .timeline li {
   position: relative;
-  padding: 0 0 14px 24px;
-  font-size: 13px;
+  padding: 0 0 13px 22px;
+  font-size: 12px;
   color: var(--hint);
 }
 
@@ -534,21 +662,21 @@ select.input {
   position: absolute;
   left: 4px;
   top: 4px;
-  width: 10px;
-  height: 10px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
-  background: var(--bg-secondary);
-  border: 2px solid var(--hint);
+  background: var(--bg);
+  border: 2px solid var(--border);
 }
 
 .timeline li::after {
   content: "";
   position: absolute;
   left: 9px;
-  top: 18px;
+  top: 16px;
   bottom: 0;
   width: 1px;
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--border);
 }
 
 .timeline li:last-child::after {
@@ -575,37 +703,40 @@ select.input {
   color: var(--hint);
 }
 
-/* Действия по сделке */
+/* ---------- Действия ---------- */
+
 .deal-actions {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
 }
 
 .action-note {
-  font-size: 13px;
+  font-size: 12px;
   color: var(--hint);
   text-align: center;
-  line-height: 1.45;
+  padding: 2px 8px;
 }
 
-/* Профиль */
+/* ---------- Профиль ---------- */
+
 .profile-card {
-  background: var(--bg-secondary);
+  border: 1px solid var(--border);
   border-radius: var(--radius);
+  background: var(--surface);
   padding: 20px;
   text-align: center;
-  margin-bottom: 14px;
+  margin-bottom: 10px;
 }
 
 .profile-name {
-  font-size: 18px;
+  font-size: 16px;
   font-weight: 700;
   margin-top: 10px;
 }
 
 .profile-id {
-  font-size: 13px;
+  font-size: 12px;
   color: var(--hint);
   margin-top: 2px;
 }
@@ -613,53 +744,62 @@ select.input {
 .stats-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 10px;
-  margin-bottom: 14px;
+  gap: 8px;
+  margin-bottom: 10px;
 }
 
 .stat-card {
-  background: var(--bg-secondary);
+  border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 14px;
+  background: var(--surface);
+  padding: 12px;
   text-align: center;
 }
 
 .stat-value {
-  font-size: 20px;
+  font-size: 18px;
   font-weight: 800;
+  font-variant-numeric: tabular-nums;
 }
 
 .stat-label {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--hint);
-  margin-top: 2px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-top: 3px;
 }
 
 .info-card {
-  background: var(--bg-secondary);
+  border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 16px;
-  margin-bottom: 8px;
-}
-
-.info-title {
-  font-size: 14px;
-  font-weight: 700;
+  background: var(--surface);
+  padding: 14px;
   margin-bottom: 10px;
 }
 
-.info-list {
-  padding-left: 18px;
-  font-size: 13px;
+.info-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
   color: var(--hint);
-  line-height: 1.6;
+  margin-bottom: 8px;
 }
 
-/* Нижняя навигация */
+.info-list {
+  padding-left: 16px;
+  font-size: 12px;
+  color: var(--hint);
+  line-height: 1.65;
+}
+
+/* ---------- Нижняя навигация ---------- */
+
 .tabbar {
   display: flex;
-  background: var(--bg-secondary);
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  background: var(--surface);
+  border-top: 1px solid var(--border);
   padding-bottom: env(safe-area-inset-bottom);
   flex-shrink: 0;
 }
@@ -672,8 +812,8 @@ select.input {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 2px;
-  padding: 10px 0 8px;
+  gap: 3px;
+  padding: 9px 0 7px;
   cursor: pointer;
   font-family: inherit;
 }
@@ -683,10 +823,13 @@ select.input {
 }
 
 .tab-icon {
-  font-size: 20px;
+  width: 20px;
+  height: 20px;
 }
 
 .tab-label {
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
 }
