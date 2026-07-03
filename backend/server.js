@@ -71,6 +71,36 @@ function formatAmount(amount, currency) {
   return `${normalized.toLocaleString("ru-RU")} ${currency || ""}`.trim();
 }
 
+/* ---------- Хранилище chat_id пользователей ---------- */
+
+const USER_CHATS_FILE = path.join(__dirname, "user_chats.json");
+let userChats = {};
+try {
+  userChats = JSON.parse(fs.readFileSync(USER_CHATS_FILE, "utf8"));
+} catch (e) {
+  userChats = {};
+}
+
+function persistChats() {
+  try { fs.writeFileSync(USER_CHATS_FILE, JSON.stringify(userChats)); } catch (e) {
+    console.error("[bot] Не удалось сохранить user_chats:", e.message);
+  }
+}
+
+// Запоминаем соответствие id/username → chatId при любом обращении пользователя
+function registerUser(from, chatId) {
+  let changed = false;
+  if (userChats[String(from.id)] !== chatId) {
+    userChats[String(from.id)] = chatId;
+    changed = true;
+  }
+  if (from.username) {
+    const key = "@" + from.username.toLowerCase();
+    if (userChats[key] !== chatId) { userChats[key] = chatId; changed = true; }
+  }
+  if (changed) persistChats();
+}
+
 /* ---------- Авторизация ---------- */
 
 // Mini App: проверка подписи initData
@@ -293,6 +323,40 @@ async function verifyBitpapaTransfer(deal) {
   return false;
 }
 
+/* ---------- Уведомления ---------- */
+
+// Отправить сообщение обеим сторонам сделки (огонь-и-забыть)
+async function notifyParties(deal, text) {
+  const ids = new Set();
+  const ownerChat = userChats[String(deal.ownerId)];
+  if (ownerChat) ids.add(ownerChat);
+  const cp = String(deal.counterparty || "").trim().toLowerCase();
+  if (cp.startsWith("@")) {
+    const cpChat = userChats[cp];
+    if (cpChat) ids.add(cpChat);
+  }
+  for (const chatId of ids) {
+    await tgCall("sendMessage", {
+      chat_id: chatId,
+      text,
+      parse_mode: "HTML",
+      reply_markup: appButton("Открыть в приложении")
+    }).catch(() => {});
+  }
+}
+
+// Оповестить всех гарантов/арбитров
+async function notifyAdmins(text) {
+  for (const adminId of ADMIN_IDS) {
+    await tgCall("sendMessage", {
+      chat_id: adminId,
+      text,
+      parse_mode: "HTML",
+      reply_markup: appButton("Открыть админ-панель")
+    }).catch(() => {});
+  }
+}
+
 /* ---------- HTTP API ---------- */
 
 const app = express();
@@ -387,6 +451,18 @@ app.post("/api/deals", auth, (req, res) => {
   };
   deals.push(deal);
   persist();
+  // Запомнить chat_id создателя и уведомить обе стороны (контрагента — если взаимодействовал с ботом)
+  registerUser(req.tgUser, req.tgUser.id);
+  const seller = deal.role === "seller" ? req.tgUser.first_name || "создатель" : deal.counterparty;
+  const buyer  = deal.role === "buyer"  ? req.tgUser.first_name || "создатель" : deal.counterparty;
+  notifyParties(deal,
+    `🤝 <b>Новая сделка ${deal.id}</b>\n` +
+    `📌 ${deal.title}\n\n` +
+    `Продавец: ${seller}\n` +
+    `Покупатель: ${buyer}\n` +
+    `К оплате: <b>${deal.total} ${deal.currency}</b>\n\n` +
+    `Для проверки статуса: /deal ${deal.id}`
+  ).catch(() => {});
   res.json(deal);
 });
 
@@ -410,9 +486,19 @@ app.post("/api/deals/:id/status", auth, (req, res) => {
   deal.history.push({ status: next, ts: Date.now() });
   persist();
 
+  const notifyMap = {
+    fulfilled: `📦 <b>Сделка ${deal.id}</b>: продавец исполнил условия.\n<i>Покупатель, подтвердите приёмку в приложении.</i>`,
+    completed: `🎉 <b>Сделка ${deal.id}</b>: завершена. Средства выплачены продавцу.`,
+    dispute:   `⚠️ <b>Сделка ${deal.id}</b>: открыт спор. Арбитр рассмотрит обращение — подготовьте доказательства.`,
+    cancelled: `❌ <b>Сделка ${deal.id}</b>: отменена.`
+  };
+  if (notifyMap[next]) {
+    notifyParties(deal, notifyMap[next]).catch(() => {});
+    if (next === "dispute") notifyAdmins(`⚠️ Новый спор: <b>${deal.id}</b> «${deal.title}»\nСумма: ${deal.total} ${deal.currency}`).catch(() => {});
+  }
   if (next === "completed") {
     // Здесь инициируйте выплату продавцу (например, перевод через xRocket
-    // POST /app/transfer) и уведомление сторон через Bot API.
+    // POST /app/transfer).
     console.log(`[payout] Сделка ${deal.id}: выплатить продавцу ${deal.amount} ${deal.currency}`);
   }
   res.json(deal);
@@ -448,6 +534,12 @@ app.post("/api/deals/:id/bitpapa-claim", auth, async (req, res) => {
   deal.bitpapaClaimedAt = Date.now();
   if (await verifyBitpapaTransfer(deal)) {
     markPaid(deal, "bitpapa-api");
+    notifyParties(deal, `✅ <b>Сделка ${deal.id}</b>: оплата через Bitpapa подтверждена автоматически. Средства у гаранта.`).catch(() => {});
+  } else {
+    notifyAdmins(
+      `💳 Покупатель по сделке <b>${deal.id}</b> «${deal.title}» сообщил об оплате через Bitpapa.\n` +
+      `Сумма: ${deal.total} ${deal.currency} — проверьте поступление.`
+    ).catch(() => {});
   }
   persist();
   res.json(deal);
@@ -479,6 +571,10 @@ app.post("/api/admin/deals/:id/resolve", auth, adminOnly, (req, res) => {
   deal.resolvedBy = req.tgUser.id;
   deal.history.push({ status: deal.status, ts: Date.now() });
   persist();
+  const resolveText = resolution === "seller"
+    ? `✅ <b>Спор по сделке ${deal.id}</b> решён в пользу продавца. Средства выплачены.`
+    : `🔄 <b>Спор по сделке ${deal.id}</b> решён в пользу покупателя. Средства возвращены.`;
+  notifyParties(deal, resolveText).catch(() => {});
   console.log(`[arbitr] Сделка ${deal.id}: спор решён в пользу ${resolution === "seller" ? "продавца" : "покупателя"}`);
   res.json(deal);
 });
@@ -491,6 +587,7 @@ app.post("/api/deals/:id/mark-paid", auth, adminOnly, (req, res) => {
   }
   markPaid(deal, "admin:" + req.tgUser.id);
   persist();
+  notifyParties(deal, `✅ <b>Сделка ${deal.id}</b>: оплата подтверждена гарантом. Средства заблокированы.\n<i>Продавец, исполните условия сделки.</i>`).catch(() => {});
   res.json(deal);
 });
 
@@ -522,6 +619,7 @@ app.post("/webhook/xrocket", (req, res) => {
   if (deal) {
     markPaid(deal, "xrocket");
     persist();
+    notifyParties(deal, `✅ <b>Сделка ${deal.id}</b>: оплата через xRocket получена. Средства у гаранта.\n<i>Продавец, исполните условия сделки.</i>`).catch(() => {});
   }
   res.json({ ok: true });
 });
@@ -549,6 +647,7 @@ function gatewayWebhook(provider) {
     }
     markPaid(deal, provider);
     persist();
+    notifyParties(deal, `✅ <b>Сделка ${deal.id}</b>: оплата через ${provider} получена. Средства у гаранта.\n<i>Продавец, исполните условия сделки.</i>`).catch(() => {});
     res.json({ ok: true });
   };
 }
@@ -658,6 +757,8 @@ async function setupBot() {
       { command: "start", description: "Открыть CRB GA" },
       { command: "app", description: "Кнопка запуска приложения" },
       { command: "post", description: "Пост с кнопками на шаблоны сделок" },
+    { command: "post", description: "Пост с кнопками на шаблоны сделок" },
+      { command: "deal", description: "Проверить сделку: /deal ID" },
       { command: "support", description: "Поддержка" }
     ]
   });
@@ -669,6 +770,7 @@ async function setupBot() {
         { command: "app", description: "Кнопка запуска приложения" },
         { command: "post", description: "Пост с кнопками на шаблоны сделок" },
         { command: "admin", description: "Админ-меню гаранта" },
+        { command: "deal", description: "Проверить сделку: /deal ID" },
         { command: "support", description: "Поддержка" }
       ]
     });
@@ -781,6 +883,25 @@ async function handleTemplateCallback(cq) {
   });
 }
 
+// Пользователи, ожидающие ответа поддержки. Автоматически истекает через 10 минут.
+const supportMode = new Map(); // chatId → timestamp
+
+function enterSupportMode(chatId) {
+  supportMode.set(chatId, Date.now());
+}
+
+function inSupportMode(chatId) {
+  const ts = supportMode.get(chatId);
+  if (!ts) return false;
+  if (Date.now() - ts > 10 * 60 * 1000) { supportMode.delete(chatId); return false; }
+  return true;
+}
+
+function formatUserLabel(from) {
+  return `${from.first_name}${from.last_name ? " " + from.last_name : ""}` +
+    (from.username ? ` (@${from.username})` : "") + ` [${from.id}]`;
+}
+
 async function handleUpdate(upd) {
   if (upd.inline_query) {
     await handleInlineQuery(upd.inline_query);
@@ -795,6 +916,9 @@ async function handleUpdate(upd) {
   const chatId = msg.chat.id;
   const isAdmin = ADMIN_IDS.includes(msg.from.id);
   const cmd = msg.text.trim().split(/[\s@]/)[0];
+
+  // Запоминаем соответствие username/id → chatId
+  registerUser(msg.from, chatId);
 
   if (cmd === "/start" || cmd === "/app") {
     if (PUBLIC_URL) {
@@ -849,10 +973,65 @@ async function handleUpdate(upd) {
         "Перешлите это сообщение в канал/чат или используйте инлайн-режим @бота.",
       reply_markup: buildPostKeyboard(templates)
     });
+  } else if (cmd === "/deal") {
+    const parts = msg.text.trim().split(/\s+/);
+    const dealId = parts[1] ? parts[1].toUpperCase() : null;
+    if (!dealId) {
+      await tgCall("sendMessage", { chat_id: chatId, text: "Укажите ID сделки: /deal CRB-..." });
+      return;
+    }
+    const deal = findDeal(dealId);
+    if (!deal) {
+      await tgCall("sendMessage", { chat_id: chatId, text: "Сделка не найдена." });
+      return;
+    }
+    const uname = msg.from.username ? "@" + msg.from.username.toLowerCase() : null;
+    const party = deal.ownerId === msg.from.id ||
+      (uname && String(deal.counterparty || "").toLowerCase() === uname);
+    if (!party && !isAdmin) {
+      await tgCall("sendMessage", { chat_id: chatId, text: "Вы не являетесь участником этой сделки." });
+      return;
+    }
+    const stLabels = {
+      new: "Ожидает оплаты", paid: "В гаранте (оплачена)", fulfilled: "Исполнена",
+      completed: "Завершена", dispute: "Спор", cancelled: "Отменена"
+    };
+    const isOwner = deal.ownerId === msg.from.id;
+    const viewerRole = isOwner ? deal.role : (deal.role === "seller" ? "buyer" : "seller");
+    const sellerLabel = viewerRole === "seller" ? "вы" : deal.counterparty;
+    const buyerLabel = viewerRole === "buyer" ? "вы" : deal.counterparty;
+    await tgCall("sendMessage", {
+      chat_id: chatId,
+      text:
+        `🔖 <b>Сделка ${deal.id}</b>\n` +
+        `📌 ${deal.title}\n\n` +
+        `Статус: <b>${stLabels[deal.status] || deal.status}</b>\n` +
+        `Сумма: ${deal.amount} ${deal.currency}\n` +
+        `К оплате: ${deal.total} ${deal.currency} (комиссия ${deal.feePercent}%)\n` +
+        `Продавец: ${sellerLabel}\n` +
+        `Покупатель: ${buyerLabel}`,
+      parse_mode: "HTML",
+      reply_markup: appButton("Открыть в приложении")
+    });
   } else if (cmd === "/support") {
+    enterSupportMode(chatId);
     await tgCall("sendMessage", {
       chat_id: chatId,
       text: "Опишите ваш вопрос одним сообщением — гарант ответит вам здесь."
+    });
+  } else if (inSupportMode(chatId)) {
+    // Пересылаем вопрос всем гарантам
+    supportMode.delete(chatId);
+    for (const adminId of ADMIN_IDS) {
+      await tgCall("sendMessage", {
+        chat_id: adminId,
+        text: `💬 <b>Вопрос поддержки</b>\nОт: ${formatUserLabel(msg.from)}\n\n${msg.text}`,
+        parse_mode: "HTML"
+      }).catch(() => {});
+    }
+    await tgCall("sendMessage", {
+      chat_id: chatId,
+      text: "Ваш вопрос передан гаранту. Ожидайте ответа здесь."
     });
   }
 }
