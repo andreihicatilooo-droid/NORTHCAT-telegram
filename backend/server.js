@@ -60,6 +60,17 @@ function findDeal(id) {
   return deals.find((d) => d.id === id);
 }
 
+function dealAmount(amount) {
+  const v = parseFloat(amount);
+  return Number.isFinite(v) ? Math.round(v * 1e8) / 1e8 : NaN;
+}
+
+function formatAmount(amount, currency) {
+  const normalized = dealAmount(amount);
+  if (!Number.isFinite(normalized)) return `— ${currency || ""}`.trim();
+  return `${normalized.toLocaleString("ru-RU")} ${currency || ""}`.trim();
+}
+
 /* ---------- Авторизация ---------- */
 
 // Mini App: проверка подписи initData
@@ -329,6 +340,7 @@ function isParty(deal, user) {
   const uname = user.username ? "@" + String(user.username).toLowerCase() : null;
   return (
     deal.ownerId === user.id ||
+    deal.counterpartyId === user.id ||
     (uname && String(deal.counterparty || "").toLowerCase() === uname)
   );
 }
@@ -351,11 +363,16 @@ app.post("/api/deals", auth, (req, res) => {
     return res.status(400).json({ error: "Заполните все поля" });
   }
   const fee = (amount * FEE_PERCENT) / 100;
+  const parsedCounterpartyId = parseInt(b.counterpartyId, 10);
+  const counterpartyId = Number.isFinite(parsedCounterpartyId) && parsedCounterpartyId > 0
+    ? parsedCounterpartyId
+    : undefined;
   const deal = {
     id: "CRB-" + Date.now().toString(36).toUpperCase() + crypto.randomBytes(2).toString("hex").toUpperCase(),
     ownerId: req.tgUser.id,
     role: b.role === "buyer" ? "buyer" : "seller",
     counterparty: String(b.counterparty).slice(0, 64),
+    counterpartyId,
     title: String(b.title).slice(0, 120),
     terms: String(b.terms).slice(0, 1000),
     amount,
@@ -563,6 +580,67 @@ function appButton(text) {
   return { inline_keyboard: [[{ text, web_app: { url: PUBLIC_URL + "/" } }]] };
 }
 
+function dealTemplateButtonText(deal) {
+  const amountText = formatAmount(deal.amount, deal.currency);
+  const reserve = Math.max(0, 64 - amountText.length - 3);
+  const title = String(deal.title || "Сделка").slice(0, reserve);
+  return `${title} · ${amountText}`.slice(0, 64);
+}
+
+function getDealTemplates(ownerId, query) {
+  const q = String(query || "").trim().toLowerCase();
+  return deals
+    .filter((d) => d.ownerId === ownerId && d.role === "seller")
+    .filter((d) => {
+      if (!q) return true;
+      return String(d.title || "").toLowerCase().includes(q) ||
+        String(d.terms || "").toLowerCase().includes(q);
+    })
+    .sort((a, b) => b.createdAt - a.createdAt)
+    .slice(0, 10);
+}
+
+function buildPostKeyboard(templates) {
+  return {
+    inline_keyboard: templates.map((deal) => [
+      { text: dealTemplateButtonText(deal), callback_data: `tpl:${deal.id}` }
+    ])
+  };
+}
+
+function createDealFromTemplate(template, buyer) {
+  if (!buyer || !Number.isFinite(Number(buyer.id))) return null;
+  if (!Number.isFinite(Number(template.ownerId)) || Number(template.ownerId) <= 0) return null;
+  const amount = dealAmount(template.amount);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    return null;
+  }
+  const fee = (amount * FEE_PERCENT) / 100;
+  const buyerUsername = buyer.username && String(buyer.username).trim()
+    ? `@${String(buyer.username).trim()}`
+    : "";
+  const buyerLabel = buyerUsername || `ID ${buyer.id}`;
+  return {
+    id: "CRB-" + Date.now().toString(36).toUpperCase() + crypto.randomBytes(2).toString("hex").toUpperCase(),
+    ownerId: Number(template.ownerId),
+    role: "seller",
+    counterparty: String(buyerLabel).slice(0, 64),
+    counterpartyId: buyer.id,
+    title: String(template.title || "").slice(0, 120),
+    terms: String(template.terms || "").slice(0, 1000),
+    amount,
+    currency: ["USDT", "TON", "BTC", "RUB"].includes(template.currency) ? template.currency : "USDT",
+    method: KNOWN_METHODS.includes(template.method) ? template.method : "xrocket",
+    feePercent: FEE_PERCENT,
+    fee,
+    total: amount + fee,
+    status: "new",
+    sourceTemplateId: template.id,
+    createdAt: Date.now(),
+    history: [{ status: "new", ts: Date.now() }]
+  };
+}
+
 // Разовая настройка бота: описание, команды, админ-команды
 async function setupBot() {
   await tgCall("setMyShortDescription", {
@@ -579,6 +657,7 @@ async function setupBot() {
     commands: [
       { command: "start", description: "Открыть CRB GA" },
       { command: "app", description: "Кнопка запуска приложения" },
+      { command: "post", description: "Пост с кнопками на шаблоны сделок" },
       { command: "support", description: "Поддержка" }
     ]
   });
@@ -588,6 +667,7 @@ async function setupBot() {
       commands: [
         { command: "start", description: "Открыть CRB GA" },
         { command: "app", description: "Кнопка запуска приложения" },
+        { command: "post", description: "Пост с кнопками на шаблоны сделок" },
         { command: "admin", description: "Админ-меню гаранта" },
         { command: "support", description: "Поддержка" }
       ]
@@ -596,7 +676,120 @@ async function setupBot() {
   console.log("[bot] Команды и описание настроены");
 }
 
+async function handleInlineQuery(inline) {
+  const templates = getDealTemplates(inline.from.id, inline.query);
+  const results = templates.map((deal) => ({
+    type: "article",
+    id: String(deal.id),
+    title: deal.title,
+    description: String(deal.terms || "Оформление сделки через гаранта").slice(0, 90),
+    input_message_content: {
+      message_text:
+        "📌 Объявление гаранта CRB GA\n" +
+        `${deal.title}\n` +
+        `Сумма: ${formatAmount(deal.amount, deal.currency)}\n` +
+        "Нажмите кнопку ниже, чтобы создать сделку по шаблону."
+    },
+    reply_markup: {
+      inline_keyboard: [[
+        { text: `Оформить: ${String(deal.title || "Сделка").slice(0, 24)}`, callback_data: `tpl:${deal.id}` }
+      ]]
+    }
+  }));
+
+  if (!results.length) {
+    results.push({
+      type: "article",
+      id: "no-templates",
+      title: "Нет шаблонов для инлайн-приглашения",
+      description: "Создайте хотя бы одну сделку продавца и повторите запрос.",
+      input_message_content: {
+        message_text:
+          "Нет доступных шаблонов сделок для инлайн-приглашения.\n" +
+          "Создайте сделку в CRB GA как продавец, затем повторите запрос."
+      },
+      reply_markup: appButton("Открыть CRB GA")
+    });
+  }
+
+  await tgCall("answerInlineQuery", {
+    inline_query_id: inline.id,
+    cache_time: 0,
+    is_personal: true,
+    results
+  });
+}
+
+async function handleTemplateCallback(cq) {
+  const data = String(cq.data || "");
+  if (!data.startsWith("tpl:")) return;
+  const templateId = data.slice(4);
+  const template = findDeal(templateId);
+  if (!template || template.role !== "seller") {
+    await tgCall("answerCallbackQuery", {
+      callback_query_id: cq.id,
+      text: "Шаблон сделки не найден.",
+      show_alert: true
+    });
+    return;
+  }
+  if (!cq.from || !cq.from.id) return;
+  if (Number(cq.from.id) === Number(template.ownerId)) {
+    await tgCall("answerCallbackQuery", {
+      callback_query_id: cq.id,
+      text: "Нельзя принять собственный шаблон.",
+      show_alert: true
+    });
+    return;
+  }
+
+  const deal = createDealFromTemplate(template, cq.from);
+  if (!deal) {
+    await tgCall("answerCallbackQuery", {
+      callback_query_id: cq.id,
+      text: "Не удалось создать сделку из шаблона.",
+      show_alert: true
+    });
+    return;
+  }
+  deals.push(deal);
+  persist();
+
+  await tgCall("answerCallbackQuery", {
+    callback_query_id: cq.id,
+    text: `Сделка ${deal.id} создана`,
+    show_alert: false
+  });
+
+  await tgCall("sendMessage", {
+    chat_id: cq.from.id,
+    text:
+      `✅ Сделка ${deal.id} создана по шаблону.\n` +
+      `Продавец: ID ${template.ownerId}\n` +
+      `Сумма: ${formatAmount(deal.amount, deal.currency)}\n` +
+      "Откройте CRB GA, чтобы продолжить.",
+    reply_markup: appButton("Открыть CRB GA")
+  });
+
+  await tgCall("sendMessage", {
+    chat_id: template.ownerId,
+    text:
+      `📥 Новый отклик на объявление: создана сделка ${deal.id}.\n` +
+      `Покупатель: ${deal.counterparty}\n` +
+      `Сумма: ${formatAmount(deal.amount, deal.currency)}`,
+    reply_markup: appButton("Открыть CRB GA")
+  });
+}
+
 async function handleUpdate(upd) {
+  if (upd.inline_query) {
+    await handleInlineQuery(upd.inline_query);
+    return;
+  }
+  if (upd.callback_query) {
+    await handleTemplateCallback(upd.callback_query);
+    return;
+  }
   const msg = upd.message;
   if (!msg || !msg.text || msg.chat.type !== "private") return;
   const chatId = msg.chat.id;
@@ -637,6 +830,24 @@ async function handleUpdate(upd) {
         `Ожидают подтверждения оплаты: ${awaiting}\n\n` +
         "Подтверждение оплат и решение споров — во вкладке «Админ» приложения.",
       reply_markup: appButton("Открыть админ-панель")
+    });
+  } else if (cmd === "/post") {
+    const templates = getDealTemplates(msg.from.id);
+    if (!templates.length) {
+      await tgCall("sendMessage", {
+        chat_id: chatId,
+        text:
+          "Нет шаблонов сделок для поста.\n" +
+          "Создайте хотя бы одну сделку с ролью продавца в CRB GA."
+      });
+      return;
+    }
+    await tgCall("sendMessage", {
+      chat_id: chatId,
+      text:
+        "📣 Готовый пост-объявление с кнопками на разные сделки.\n" +
+        "Перешлите это сообщение в канал/чат или используйте инлайн-режим @бота.",
+      reply_markup: buildPostKeyboard(templates)
     });
   } else if (cmd === "/support") {
     await tgCall("sendMessage", {
