@@ -90,6 +90,7 @@
     $("logout-button").hidden = false;
     renderUser();
     loadDeals();
+    checkAdmin();
   }
 
   function initAuth() {
@@ -99,6 +100,7 @@
       user = tgUser;
       renderUser();
       loadDeals();
+      checkAdmin();
       return;
     }
 
@@ -110,6 +112,7 @@
       $("logout-button").hidden = false;
       renderUser();
       loadDeals();
+      checkAdmin();
       return;
     }
 
@@ -298,7 +301,9 @@
   document.querySelectorAll(".tab").forEach(function (tab) {
     tab.addEventListener("click", function () {
       haptic("light");
-      showScreen(tab.getAttribute("data-screen"));
+      var id = tab.getAttribute("data-screen");
+      showScreen(id);
+      if (id === "screen-admin") loadAdminDeals();
     });
   });
 
@@ -786,6 +791,140 @@
 
   $("support-button").addEventListener("click", openSupport);
   $("deal-back").addEventListener("click", function () { showScreen("screen-deals"); });
+
+  /* ---------- Админ-панель ---------- */
+
+  var isAdmin = false;
+
+  // После входа в боевом режиме узнаём права: гаранту открывается вкладка «Админ»
+  function checkAdmin() {
+    if (isDemo()) return;
+    api("GET", "/api/me").then(function (me) {
+      isAdmin = !!(me && me.isAdmin);
+      $("tab-admin").hidden = !isAdmin;
+    }).catch(function () { /* не критично */ });
+  }
+
+  function loadAdminDeals() {
+    if (!isAdmin) return;
+    api("GET", "/api/admin/deals").then(renderAdmin).catch(function () {
+      showAlert("Не удалось загрузить сделки.");
+    });
+  }
+
+  function renderAdmin(all) {
+    all = all || [];
+    var active = all.filter(function (d) { return d.status === "new" || d.status === "paid" || d.status === "fulfilled"; });
+    var disputes = all.filter(function (d) { return d.status === "dispute"; });
+    var awaiting = all.filter(function (d) { return d.status === "new"; });
+
+    $("admin-stat-total").textContent = all.length;
+    $("admin-stat-active").textContent = active.length;
+    $("admin-stat-disputes").textContent = disputes.length;
+    $("admin-stat-awaiting").textContent = awaiting.length;
+    $("admin-empty").classList.toggle("empty-state--visible", all.length === 0);
+
+    var list = $("admin-list");
+    list.innerHTML = "";
+
+    // Сначала споры и ожидающие оплаты, затем остальные по дате
+    var order = { dispute: 0, new: 1, paid: 2, fulfilled: 3, completed: 4, cancelled: 5 };
+    all.slice().sort(function (a, b) {
+      return (order[a.status] - order[b.status]) || (b.createdAt - a.createdAt);
+    }).forEach(function (deal) {
+      var li = document.createElement("li");
+      li.className = "deal-item";
+
+      var st = STATUS[deal.status] || STATUS.new;
+      var top = document.createElement("div");
+      top.className = "deal-item-top";
+      var title = document.createElement("span");
+      title.className = "deal-item-title";
+      title.textContent = deal.title;
+      var chip = document.createElement("span");
+      chip.className = "status-chip " + st.cls;
+      chip.textContent = st.label;
+      top.appendChild(title);
+      top.appendChild(chip);
+
+      var bottom = document.createElement("div");
+      bottom.className = "deal-item-bottom";
+      var meta = document.createElement("span");
+      meta.textContent = deal.id + " · " + deal.counterparty + " · " + methodById(deal.method).name;
+      var amount = document.createElement("span");
+      amount.className = "deal-item-amount";
+      amount.textContent = fmt(deal.total, deal.currency);
+      bottom.appendChild(meta);
+      bottom.appendChild(amount);
+
+      li.appendChild(top);
+      li.appendChild(bottom);
+
+      if (deal.status === "new" && deal.bitpapaClaimedAt) {
+        var note = document.createElement("div");
+        note.className = "admin-note";
+        note.textContent = "Покупатель сообщил о переводе Bitpapa — проверьте поступление.";
+        li.appendChild(note);
+      }
+
+      var actions = document.createElement("div");
+      actions.className = "admin-actions";
+
+      function adminButton(label, cls, handler) {
+        var b = document.createElement("button");
+        b.type = "button";
+        b.className = "btn btn--xs " + cls;
+        b.textContent = label;
+        b.addEventListener("click", function (e) {
+          e.stopPropagation();
+          handler();
+        });
+        actions.appendChild(b);
+      }
+
+      if (deal.status === "new") {
+        adminButton("Подтвердить оплату", "btn--green", function () {
+          showConfirm("Подтвердить получение " + fmt(deal.total, deal.currency) + " по сделке " + deal.id + "?", function () {
+            api("POST", "/api/deals/" + deal.id + "/mark-paid", {}).then(function () {
+              haptic("success");
+              loadAdminDeals();
+              loadDeals();
+            }).catch(function () { showAlert("Не удалось подтвердить оплату."); });
+          });
+        });
+      }
+
+      if (deal.status === "dispute") {
+        adminButton("В пользу продавца", "btn--green", function () {
+          resolveDispute(deal, "seller");
+        });
+        adminButton("В пользу покупателя", "btn--danger", function () {
+          resolveDispute(deal, "buyer");
+        });
+      }
+
+      if (actions.childNodes.length) li.appendChild(actions);
+      list.appendChild(li);
+    });
+  }
+
+  function resolveDispute(deal, resolution) {
+    var text = resolution === "seller"
+      ? "Решить спор в пользу продавца? Гарант выплатит " + fmt(deal.amount, deal.currency) + "."
+      : "Решить спор в пользу покупателя? Гарант вернёт " + fmt(deal.total, deal.currency) + ".";
+    showConfirm(text, function () {
+      api("POST", "/api/admin/deals/" + deal.id + "/resolve", { resolution: resolution }).then(function () {
+        haptic("success");
+        loadAdminDeals();
+        loadDeals();
+      }).catch(function () { showAlert("Не удалось решить спор."); });
+    });
+  }
+
+  $("admin-refresh").addEventListener("click", function () {
+    haptic("light");
+    loadAdminDeals();
+  });
 
   /* ---------- Инициализация ---------- */
 

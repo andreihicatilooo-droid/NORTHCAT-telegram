@@ -304,6 +304,11 @@ app.get("/api/health", (req, res) => {
   res.json({ ok: true, service: "crb-ga-garant" });
 });
 
+// Текущий пользователь и его права
+app.get("/api/me", auth, (req, res) => {
+  res.json({ user: req.tgUser, isAdmin: ADMIN_IDS.includes(req.tgUser.id) });
+});
+
 // Вход через Telegram Login Widget
 app.post("/api/auth/telegram", (req, res) => {
   const fields = validateWidgetAuth(req.body);
@@ -431,11 +436,38 @@ app.post("/api/deals/:id/bitpapa-claim", auth, async (req, res) => {
   res.json(deal);
 });
 
-// Ручное подтверждение оплаты гарантом
-app.post("/api/deals/:id/mark-paid", auth, (req, res) => {
+function adminOnly(req, res, next) {
   if (!ADMIN_IDS.includes(req.tgUser.id)) {
     return res.status(403).json({ error: "Только для гаранта" });
   }
+  next();
+}
+
+// Админ: все сделки сервиса
+app.get("/api/admin/deals", auth, adminOnly, (req, res) => {
+  res.json(deals);
+});
+
+// Админ: решение спора — "seller" (выплата продавцу) или "buyer" (возврат покупателю)
+app.post("/api/admin/deals/:id/resolve", auth, adminOnly, (req, res) => {
+  const deal = findDeal(req.params.id);
+  if (!deal || deal.status !== "dispute") {
+    return res.status(400).json({ error: "Сделка не найдена или спора нет" });
+  }
+  const resolution = req.body && req.body.resolution;
+  if (resolution !== "seller" && resolution !== "buyer") {
+    return res.status(400).json({ error: "resolution: seller | buyer" });
+  }
+  deal.status = resolution === "seller" ? "completed" : "cancelled";
+  deal.resolvedBy = req.tgUser.id;
+  deal.history.push({ status: deal.status, ts: Date.now() });
+  persist();
+  console.log(`[arbitr] Сделка ${deal.id}: спор решён в пользу ${resolution === "seller" ? "продавца" : "покупателя"}`);
+  res.json(deal);
+});
+
+// Ручное подтверждение оплаты гарантом
+app.post("/api/deals/:id/mark-paid", auth, adminOnly, (req, res) => {
   const deal = findDeal(req.params.id);
   if (!deal || deal.status !== "new") {
     return res.status(400).json({ error: "Сделка не найдена или уже оплачена" });
@@ -508,12 +540,142 @@ app.post("/webhook/pgon", gatewayWebhook("pgon"));
 app.post("/webhook/nicepay", gatewayWebhook("nicepay"));
 app.post("/webhook/rukassa", gatewayWebhook("rukassa"));
 
+/* ---------- Telegram-бот ---------- */
+
+const TG_API = "https://api.telegram.org/bot" + BOT_TOKEN;
+
+async function tgCall(method, payload) {
+  try {
+    const res = await fetch(TG_API + "/" + method, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload || {})
+    });
+    return await res.json();
+  } catch (e) {
+    console.error(`[bot] ${method}:`, e.message);
+    return { ok: false };
+  }
+}
+
+function appButton(text) {
+  if (!PUBLIC_URL) return undefined;
+  return { inline_keyboard: [[{ text, web_app: { url: PUBLIC_URL + "/" } }]] };
+}
+
+// Разовая настройка бота: описание, команды, админ-команды
+async function setupBot() {
+  await tgCall("setMyShortDescription", {
+    short_description: "CRB GA — гарант безопасных сделок. Escrow, споры, арбитраж."
+  });
+  await tgCall("setMyDescription", {
+    description:
+      "CRB GA — гарант-сервис безопасных сделок.\n\n" +
+      "Средства покупателя блокируются у гаранта и выплачиваются продавцу " +
+      "только после подтверждения приёмки. Разногласия решает арбитр.\n\n" +
+      "Оплата: xRocket, Bitpapa, PGon, NicePay, RuKassa."
+  });
+  await tgCall("setMyCommands", {
+    commands: [
+      { command: "start", description: "Открыть CRB GA" },
+      { command: "app", description: "Кнопка запуска приложения" },
+      { command: "support", description: "Поддержка" }
+    ]
+  });
+  for (const adminId of ADMIN_IDS) {
+    await tgCall("setMyCommands", {
+      scope: { type: "chat", chat_id: adminId },
+      commands: [
+        { command: "start", description: "Открыть CRB GA" },
+        { command: "app", description: "Кнопка запуска приложения" },
+        { command: "admin", description: "Админ-меню гаранта" },
+        { command: "support", description: "Поддержка" }
+      ]
+    });
+  }
+  console.log("[bot] Команды и описание настроены");
+}
+
+async function handleUpdate(upd) {
+  const msg = upd.message;
+  if (!msg || !msg.text || msg.chat.type !== "private") return;
+  const chatId = msg.chat.id;
+  const isAdmin = ADMIN_IDS.includes(msg.from.id);
+  const cmd = msg.text.trim().split(/[\s@]/)[0];
+
+  if (cmd === "/start" || cmd === "/app") {
+    if (PUBLIC_URL) {
+      await tgCall("setChatMenuButton", {
+        chat_id: chatId,
+        menu_button: { type: "web_app", text: "CRB GA", web_app: { url: PUBLIC_URL + "/" } }
+      });
+    }
+    await tgCall("sendMessage", {
+      chat_id: chatId,
+      text:
+        "CRB GA — гарант безопасных сделок.\n\n" +
+        "Средства покупателя блокируются у гаранта и выплачиваются продавцу после " +
+        "подтверждения приёмки. Оплата: xRocket, Bitpapa, PGon, NicePay, RuKassa." +
+        (isAdmin ? "\n\nВам доступно админ-меню: /admin" : ""),
+      reply_markup: appButton("Открыть CRB GA")
+    });
+  } else if (cmd === "/admin") {
+    if (!isAdmin) {
+      await tgCall("sendMessage", { chat_id: chatId, text: "Команда доступна только гаранту." });
+      return;
+    }
+    const active = deals.filter((d) => ["new", "paid", "fulfilled"].includes(d.status)).length;
+    const disputes = deals.filter((d) => d.status === "dispute").length;
+    const awaiting = deals.filter((d) => d.status === "new" && d.bitpapaClaimedAt).length;
+    await tgCall("sendMessage", {
+      chat_id: chatId,
+      text:
+        "Админ-меню CRB GA\n\n" +
+        `Сделок всего: ${deals.length}\n` +
+        `Активных: ${active}\n` +
+        `Споров на арбитраже: ${disputes}\n` +
+        `Ожидают подтверждения оплаты: ${awaiting}\n\n` +
+        "Подтверждение оплат и решение споров — во вкладке «Админ» приложения.",
+      reply_markup: appButton("Открыть админ-панель")
+    });
+  } else if (cmd === "/support") {
+    await tgCall("sendMessage", {
+      chat_id: chatId,
+      text: "Опишите ваш вопрос одним сообщением — гарант ответит вам здесь."
+    });
+  }
+}
+
+// Long polling: не требует публичного URL и переживает смену туннеля
+async function botLoop() {
+  // Пропускаем накопившийся бэклог, чтобы не спамить старыми ответами
+  let offset = 0;
+  const last = await tgCall("getUpdates", { offset: -1, limit: 1 });
+  if (last.ok && last.result.length) offset = last.result[0].update_id + 1;
+
+  for (;;) {
+    const res = await tgCall("getUpdates", { offset, timeout: 50 });
+    if (!res.ok) {
+      await new Promise((r) => setTimeout(r, 3000));
+      continue;
+    }
+    for (const upd of res.result) {
+      offset = upd.update_id + 1;
+      handleUpdate(upd).catch((e) => console.error("[bot] update:", e.message));
+    }
+  }
+}
+
 // Отдаём фронтенд, если он лежит рядом (можно хостить всё одним сервисом)
 app.use(express.static(path.join(__dirname, "..")));
 
 app.listen(PORT, () => {
   console.log(`CRB GA backend запущен на порту ${PORT}`);
-  if (!BOT_TOKEN) console.warn("⚠️  BOT_TOKEN не задан — авторизация работать не будет");
+  if (!BOT_TOKEN) console.warn("⚠️  BOT_TOKEN не задан — авторизация и бот работать не будут");
   if (!XROCKET_API_KEY) console.warn("⚠️  XROCKET_API_KEY не задан — счета xRocket создаваться не будут");
   if (!WEBHOOK_SECRET) console.warn("⚠️  WEBHOOK_SECRET не задан — вебхуки шлюзов отключены");
+  if (BOT_TOKEN) {
+    setupBot().catch((e) => console.error("[bot] setup:", e.message));
+    botLoop().catch((e) => console.error("[bot] loop:", e.message));
+  }
 });
