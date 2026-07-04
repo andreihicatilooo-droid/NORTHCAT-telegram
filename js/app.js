@@ -938,34 +938,20 @@
   var adminDeals = [];
   var adminFilter = "pending";
 
-  function openAdminScreen() {
-    var tab = $("admin-tab");
-    if (tab) tab.hidden = false;
-    showScreen("screen-admin");
-    loadAdminDeals();
-  }
-
   function checkAdmin() {
     var insideTelegram = !!(tg && tg.initData);
-    // ?admin=1 в браузере — быстрый переход к серверным настройкам (ключи API)
-    if (openAdminOnStart && !insideTelegram) {
-      window.location.href = "settings.html";
+    // ?admin=1: в Telegram — отдельная страница админ-панели,
+    // в браузере — серверные настройки (ключи API)
+    if (openAdminOnStart) {
+      window.location.href = insideTelegram ? "admin.html" : "settings.html";
       return;
     }
-    // В демо-режиме права проверить негде: по ?admin=1 открываем панель
-    // с локальными данными, иначе админки нет
-    if (isDemo()) {
-      if (openAdminOnStart) {
-        isAdminUser = true;
-        openAdminScreen();
-      }
-      return;
-    }
+    // В демо-режиме права проверить негде — вкладки админа нет
+    if (isDemo()) return;
     api("GET", "/api/me").then(function (res) {
       isAdminUser = !!(res && res.isAdmin);
       var tab = $("admin-tab");
       if (tab) tab.hidden = !isAdminUser;
-      if (openAdminOnStart && isAdminUser) openAdminScreen();
     }).catch(function () { /* не критично */ });
   }
 

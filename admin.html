@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>CRB GA — админ-панель</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div id="app">
+
+    <!-- Шапка -->
+    <header class="header">
+      <div class="user-info">
+        <div class="avatar" id="admin-avatar">GA</div>
+        <div class="user-meta">
+          <span class="username" id="admin-username">—</span>
+          <span class="user-role">Панель гаранта</span>
+        </div>
+      </div>
+      <div class="badge" id="admin-mode-badge">Админ</div>
+    </header>
+
+    <!-- Нет прав -->
+    <div class="auth-overlay" id="admin-denied" hidden>
+      <div class="auth-card">
+        <div class="auth-logo">CRB GA</div>
+        <div class="auth-tagline">Админ-панель гаранта</div>
+        <div class="auth-divider"></div>
+        <p class="auth-hint" id="admin-denied-text">Доступ только для Telegram ID из списка ADMIN_IDS.</p>
+        <button class="btn btn--outline" id="admin-goto-app" type="button">Открыть приложение</button>
+      </div>
+    </div>
+
+    <!-- Панель -->
+    <main class="screen screen--active" id="screen-admin-page">
+      <div class="screen-head">
+        <h2 class="screen-title">Админ-панель</h2>
+        <button class="btn btn--ghost btn--small" id="admin-refresh" type="button">Обновить</button>
+      </div>
+      <p class="screen-subtitle" id="admin-subtitle">Подтверждайте оплаты и решайте споры. Те же действия доступны из уведомлений бота.</p>
+
+      <div class="stats-grid" id="admin-stats"></div>
+
+      <form class="admin-search-form" id="admin-search-form" autocomplete="off">
+        <div class="admin-search-row">
+          <input class="input" id="admin-search-input" type="search" placeholder="Поиск: ID, предмет, контрагент">
+          <button class="btn btn--outline btn--small" type="submit">Найти</button>
+        </div>
+      </form>
+      <p class="admin-search-meta" id="admin-search-meta" hidden></p>
+
+      <div class="filter-row" id="admin-filter-row">
+        <button class="chip chip--active" data-admin-filter="pending">Ожидают оплату</button>
+        <button class="chip" data-admin-filter="dispute">Споры</button>
+        <button class="chip" data-admin-filter="active">Активные</button>
+        <button class="chip" data-admin-filter="completed">Завершённые</button>
+        <button class="chip" data-admin-filter="all">Все</button>
+      </div>
+
+      <ul class="deal-list" id="admin-list"></ul>
+      <div class="empty-state" id="admin-empty">
+        <div class="empty-mark">—</div>
+        <p>Нет задач по выбранному фильтру.</p>
+      </div>
+
+      <div class="settings-actions">
+        <button class="btn btn--outline" id="admin-settings-link" type="button">Серверные настройки</button>
+        <button class="btn btn--ghost" id="admin-app-link" type="button">Основное приложение</button>
+      </div>
+    </main>
+
+    <!-- Тост-уведомление -->
+    <div class="toast" id="toast"></div>
+
+  </div>
+  <script src="js/config.js"></script>
+  <script src="js/admin.js"></script>
+</body>
+</html>

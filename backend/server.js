@@ -1723,7 +1723,7 @@ function appButton(text) {
 
 function adminAppButton(text) {
   if (!PUBLIC_URL) return undefined;
-  return { inline_keyboard: [[{ text, web_app: { url: PUBLIC_URL + "/?admin=1" } }]] };
+  return { inline_keyboard: [[{ text, web_app: { url: PUBLIC_URL + "/admin.html" } }]] };
 }
 
 function dealTemplateButtonText(deal) {
@@ -2373,7 +2373,7 @@ async function botLoop() {
 // Только allowlist путей: раздача всего корня репозитория открывала бы
 // backend/.env, runtime_settings.json (токен бота), deals.json и .git.
 const FRONTEND_ROOT = path.join(__dirname, "..");
-const PUBLIC_PATH_RE = /^\/(?:$|index\.html$|settings\.html$|favicon\.ico$|css\/|js\/)/;
+const PUBLIC_PATH_RE = /^\/(?:$|index\.html$|admin\.html$|settings\.html$|favicon\.ico$|css\/|js\/)/;
 const staticHandler = express.static(FRONTEND_ROOT, { index: "index.html", dotfiles: "deny" });
 
 app.use((req, res, next) => {
