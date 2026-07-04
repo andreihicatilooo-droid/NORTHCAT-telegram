@@ -143,10 +143,19 @@ const WEBHOOK_SECRET = normalizedSecret(process.env.WEBHOOK_SECRET);
 // Токен API Bitpapa для автопроверки входящих переводов
 const BITPAPA_API_TOKEN = process.env.BITPAPA_API_TOKEN || "";
 
-const ADMIN_IDS = (process.env.ADMIN_IDS || "")
-  .split(",")
-  .map((s) => parseInt(s.trim(), 10))
-  .filter(Boolean);
+const rawAdminIds = process.env.ADMIN_IDS || "";
+let ADMIN_USERS = rawAdminIds.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+
+function isAdminCheck(from) {
+  if (!from) return false;
+  const fromId = String(from.id);
+  const fromUsername = from.username ? from.username.toLowerCase() : "";
+  return ADMIN_USERS.some(admin => {
+    if (admin === fromId) return true;
+    if (fromUsername && (admin === fromUsername || admin === '@' + fromUsername)) return true;
+    return false;
+  });
+}
 const ADMIN_GROUP_ID = parseInt(process.env.ADMIN_GROUP_ID || "", 10);
 
 const RUNTIME_SETTINGS_FILE = path.join(__dirname, "runtime_settings.json");
@@ -433,7 +442,7 @@ function auth(req, res, next) {
   }
   const user =
     validateInitData(initData) ||
-    validateToken(req.header("X-Auth-Token"));
+    validateToken(req.header("X-Auth-Token") || req.query.token);
   if (!user) {
     return res.status(401).json({ error: "Требуется авторизация через Telegram" });
   }
@@ -709,7 +718,8 @@ async function notifyAdminGroup(text) {
 // Оповестить всех гарантов/арбитров
 async function notifyAdmins(text) {
   if (await notifyAdminGroup(text)) return;
-  for (const adminId of ADMIN_IDS) {
+  for (const adminId of ADMIN_USERS) {
+    if (!adminId || isNaN(Number(adminId))) continue;
     await tgCall("sendMessage", {
       chat_id: adminId,
       text,
@@ -740,17 +750,26 @@ app.use((req, res, next) => {
 });
 
 app.get("/api/health", (req, res) => {
-  res.json({ ok: true, service: "crb-ga-garant" });
+  res.json({
+    ok: true,
+    service: "crb-ga-garant",
+    bot_username: BOT_INFO ? BOT_INFO.username : null
+  });
 });
 
 // Текущий пользователь и его права
 app.get("/api/me", auth, (req, res) => {
-  res.json({ user: req.tgUser, isAdmin: ADMIN_IDS.includes(req.tgUser.id) });
+  res.json({ user: req.tgUser, isAdmin: isAdminCheck(req.tgUser) });
 });
 
 function isLocalRequest(req) {
   const ip = String(req.ip || req.connection.remoteAddress || "");
-  return ip === "::1" || ip === "127.0.0.1" || ip === "::ffff:127.0.0.1";
+  const host = String(req.headers.host || "");
+  if (ip === "::1" || ip === "127.0.0.1" || ip === "::ffff:127.0.0.1") return true;
+  if (host.includes("localhost") || host.includes("127.0.0.1")) return true;
+  if (host.endsWith(".githubpreview.dev") || host.endsWith(".app.github.dev") || host.endsWith(".gitpod.io")) return true;
+  if (process.env.CODESPACES === "true") return true;
+  return false;
 }
 
 function adminRuntimeAccess(req, res, next) {
@@ -759,7 +778,7 @@ function adminRuntimeAccess(req, res, next) {
     return next();
   }
   return auth(req, res, function authDone() {
-    if (!ADMIN_IDS.includes(req.tgUser.id)) {
+    if (!isAdminCheck(req.tgUser)) {
       return res.status(403).json({ error: "Только для гаранта" });
     }
     next();
@@ -934,7 +953,7 @@ app.post("/api/deals/:id/bitpapa-claim", auth, async (req, res) => {
 });
 
 function adminOnly(req, res, next) {
-  if (!ADMIN_IDS.includes(req.tgUser.id)) {
+  if (!isAdminCheck(req.tgUser)) {
     return res.status(403).json({ error: "Только для гаранта" });
   }
   next();
@@ -1498,6 +1517,26 @@ function appButton(text) {
   return { inline_keyboard: [[{ text, web_app: { url: PUBLIC_URL + "/" } }]] };
 }
 
+function adminMenuButtons(inGroup = false) {
+  if (!PUBLIC_URL) return undefined;
+  
+  if (inGroup) {
+    return {
+      inline_keyboard: [
+        [{ text: "💼 Админ-панель (Сделки)", url: PUBLIC_URL + "/?admin=1" }],
+        [{ text: "⚙️ Настройки сервера", url: PUBLIC_URL + "/settings.html" }]
+      ]
+    };
+  } else {
+    return {
+      inline_keyboard: [
+        [{ text: "💼 Админ-панель (Сделки)", web_app: { url: PUBLIC_URL + "/?admin=1" } }],
+        [{ text: "⚙️ Настройки сервера", web_app: { url: PUBLIC_URL + "/settings.html" } }]
+      ]
+    };
+  }
+}
+
 function dealTemplateButtonText(deal) {
   const amountText = formatAmount(deal.amount, deal.currency);
   const reserve = Math.max(0, 64 - amountText.length - 3);
@@ -1578,7 +1617,8 @@ async function setupBot() {
   await tgCall("setMyCommands", {
     commands: profile.commands
   });
-  for (const adminId of ADMIN_IDS) {
+  for (const adminId of ADMIN_USERS) {
+    if (!adminId || isNaN(Number(adminId))) continue;
     await tgCall("setMyCommands", {
       scope: { type: "chat", chat_id: adminId },
       commands: [
@@ -1753,7 +1793,7 @@ async function handleGroupMessage(msg) {
   if (!chat || (chat.type !== "group" && chat.type !== "supergroup")) return;
 
   const cmd = msg.text ? msg.text.trim().split(/[\s@]/)[0] : "";
-  const isAdmin = !!(msg.from && ADMIN_IDS.includes(msg.from.id));
+  const isAdmin = isAdminCheck(msg.from);
   const botAdded = !!(
     BOT_INFO &&
     Array.isArray(msg.new_chat_members) &&
@@ -1783,7 +1823,7 @@ async function handleGroupMessage(msg) {
       await tgCall("sendMessage", {
         chat_id: chat.id,
         text:
-          "Я добавлен в группу, но привязать её может только Telegram ID из ADMIN_IDS.\n" +
+          "Я добавлен в группу, но привязать её может только администратор (чей ID или @username указан в настройках).\n" +
           "Пусть администратор выполнит здесь команду /group.",
         reply_markup: groupLinkButton("Открыть сервис")
       });
@@ -1797,7 +1837,7 @@ async function handleGroupMessage(msg) {
     if (!isAdmin) {
       await tgCall("sendMessage", {
         chat_id: chat.id,
-        text: "Привязать админ-группу может только Telegram ID из ADMIN_IDS."
+        text: "Привязать админ-группу может только администратор."
       });
       return;
     }
@@ -1827,7 +1867,7 @@ async function handleGroupMessage(msg) {
         `Споров: ${disputes}\n` +
         `Ожидают подтверждения оплаты: ${awaiting}\n` +
         `Текущая группа: ${adminGroupLabel()}`,
-      reply_markup: groupLinkButton("Открыть админ-панель")
+      reply_markup: adminMenuButtons(true)
     });
     return;
   }
@@ -1865,8 +1905,11 @@ async function handleUpdate(upd) {
   }
   if (!msg.text) return;
   const chatId = msg.chat.id;
-  const isAdmin = ADMIN_IDS.includes(msg.from.id);
-  const cmd = msg.text.trim().split(/[\s@]/)[0];
+  const isAdmin = isAdminCheck(msg.from);
+  let cmd = msg.text.trim().split(/[\s@]/)[0];
+  if (cmd === "/start" && msg.text.includes("admin")) {
+    cmd = "/admin";
+  }
 
   // Запоминаем соответствие username/id → chatId
   registerUser(msg.from, chatId);
@@ -1904,7 +1947,7 @@ async function handleUpdate(upd) {
         `Споров на арбитраже: ${disputes}\n` +
         `Ожидают подтверждения оплаты: ${awaiting}\n\n` +
         "Подтверждение оплат и решение споров — во вкладке «Админ» приложения.",
-      reply_markup: appButton("Открыть админ-панель")
+      reply_markup: adminMenuButtons(false)
     });
   } else if (cmd === "/post") {
     const templates = getDealTemplates(msg.from.id);
@@ -1953,7 +1996,8 @@ async function handleUpdate(upd) {
   } else if (inSupportMode(chatId)) {
     // Пересылаем вопрос всем гарантам
     supportMode.delete(chatId);
-    for (const adminId of ADMIN_IDS) {
+    for (const adminId of ADMIN_USERS) {
+      if (!adminId || isNaN(Number(adminId))) continue;
       await tgCall("sendMessage", {
         chat_id: adminId,
         text: `💬 <b>Вопрос поддержки</b>\nОт: ${formatUserLabel(msg.from)}\n\n${msg.text}`,

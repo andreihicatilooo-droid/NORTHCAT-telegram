@@ -243,33 +243,66 @@
   function showAuthScreen() {
     $("screen-auth").hidden = false;
 
-    // Telegram Login Widget (нужен BOT_USERNAME и /setdomain у @BotFather)
-    if (CFG.BOT_USERNAME && !$("tg-login-widget").hasChildNodes()) {
-      window.onTelegramAuth = function (widgetUser) {
-        if (isDemo()) {
-          setAuth(widgetUser, null);
-          return;
+    if (!$("tg-login-widget").hasChildNodes()) {
+      fetch(API_BASE + "/api/health").then(function(r) { return r.json(); }).then(function(health) {
+        var botUsername = (health && health.bot_username) || CFG.BOT_USERNAME;
+        if (!botUsername) return; // Cannot render widget without a bot username
+
+        var openBtn = $("open-tg-bot");
+        if (openBtn) {
+          openBtn.style.display = "block";
+          openBtn.onclick = function() {
+            window.location.href = "https://t.me/" + botUsername + "?start=app";
+          };
         }
-        // Бэкенд проверяет подпись виджета и выдаёт токен сессии
-        fetch(API_BASE + "/api/auth/telegram", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(widgetUser)
-        }).then(function (r) { return r.json(); }).then(function (res) {
-          if (res && res.token) setAuth(res.user, res.token);
-          else showAlert("Не удалось подтвердить вход через Telegram.");
-        }).catch(function () {
-          showAlert("Ошибка входа. Попробуйте позже.");
-        });
-      };
-      var s = document.createElement("script");
-      s.src = "https://telegram.org/js/telegram-widget.js?22";
-      s.setAttribute("data-telegram-login", CFG.BOT_USERNAME);
-      s.setAttribute("data-size", "medium");
-      s.setAttribute("data-radius", "8");
-      s.setAttribute("data-onauth", "onTelegramAuth(user)");
-      s.setAttribute("data-request-access", "write");
-      $("tg-login-widget").appendChild(s);
+
+        window.onTelegramAuth = function (widgetUser) {
+          if (isDemo()) {
+            setAuth(widgetUser, null);
+            return;
+          }
+          fetch(API_BASE + "/api/auth/telegram", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(widgetUser)
+          }).then(function (r) { return r.json(); }).then(function (res) {
+            if (res && res.token) setAuth(res.user, res.token);
+            else showAlert("Не удалось подтвердить вход через Telegram.");
+          }).catch(function () {
+            showAlert("Ошибка входа. Попробуйте позже.");
+          });
+        };
+        var s = document.createElement("script");
+        s.src = "https://telegram.org/js/telegram-widget.js?22";
+        s.setAttribute("data-telegram-login", botUsername);
+        s.setAttribute("data-size", "medium");
+        s.setAttribute("data-radius", "8");
+        s.setAttribute("data-onauth", "onTelegramAuth(user)");
+        s.setAttribute("data-request-access", "write");
+        $("tg-login-widget").appendChild(s);
+      }).catch(function() {
+        // Fallback if health fails
+        if (!CFG.BOT_USERNAME) return;
+        window.onTelegramAuth = function (widgetUser) {
+          if (isDemo()) { setAuth(widgetUser, null); return; }
+          fetch(API_BASE + "/api/auth/telegram", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(widgetUser)
+          }).then(function (r) { return r.json(); }).then(function (res) {
+            if (res && res.token) setAuth(res.user, res.token);
+            else showAlert("Не удалось подтвердить вход через Telegram.");
+          }).catch(function () { showAlert("Ошибка входа. Попробуйте позже."); });
+        };
+        var s = document.createElement("script");
+        s.src = "https://telegram.org/js/telegram-widget.js?22";
+        s.setAttribute("data-telegram-login", CFG.BOT_USERNAME);
+        s.setAttribute("data-size", "medium");
+        s.setAttribute("data-radius", "8");
+        s.setAttribute("data-onauth", "onTelegramAuth(user)");
+        s.setAttribute("data-request-access", "write");
+        $("tg-login-widget").appendChild(s);
+      });
     }
   }
 
@@ -343,8 +376,18 @@
 
   function api(method, path, body) {
     var headers = { "Content-Type": "application/json" };
-    if (tg && tg.initData) headers["X-Telegram-Init-Data"] = tg.initData;
-    if (authToken) headers["X-Auth-Token"] = authToken;
+    if (tg && tg.initData) {
+      // Use B64 to avoid non-ISO-8859-1 char errors in fetch headers
+      try {
+        var bytes = new TextEncoder().encode(String(tg.initData || ''));
+        var binary = '';
+        for (var i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+        headers["X-Telegram-Init-Data-B64"] = btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+      } catch (e) {
+        headers["X-Telegram-Init-Data"] = tg.initData;
+      }
+    }
+    if (authToken) headers["X-Auth-Token"] = encodeURIComponent(authToken);
     return fetch(API_BASE + path, {
       method: method,
       headers: headers,
@@ -415,6 +458,23 @@
     if (tg && tg.BackButton) {
       if (id === "screen-deal") tg.BackButton.show();
       else tg.BackButton.hide();
+    }
+
+    document.body.setAttribute("data-screen", id);
+    $("app").setAttribute("data-screen", id);
+    emitScreenChange(id);
+  }
+
+  function emitScreenChange(id) {
+    var detail = { screen: id };
+    try {
+      window.dispatchEvent(new CustomEvent("northcat:screenchange", { detail: detail }));
+    } catch (e) {
+      if (document.createEvent) {
+        var event = document.createEvent("CustomEvent");
+        event.initCustomEvent("northcat:screenchange", false, false, detail);
+        window.dispatchEvent(event);
+      }
     }
   }
 
@@ -543,6 +603,11 @@
   }
 
   $("new-deal-button").addEventListener("click", function () {
+    haptic("light");
+    showScreen("screen-create");
+  });
+
+  $("hero-create-button").addEventListener("click", function () {
     haptic("light");
     showScreen("screen-create");
   });
@@ -893,7 +958,11 @@
 
   function renderStats() {
     var total = deals.length;
+    var active = deals.filter(function (d) {
+      return d.status === "new" || d.status === "paid" || d.status === "fulfilled";
+    }).length;
     var completed = deals.filter(function (d) { return d.status === "completed"; }).length;
+    var disputed = deals.filter(function (d) { return d.status === "dispute"; }).length;
     var turnover = deals.reduce(function (sum, d) {
       return d.status === "completed" && d.currency === "USDT" ? sum + d.amount : sum;
     }, 0);
@@ -901,6 +970,35 @@
     $("stat-completed").textContent = completed;
     $("stat-turnover").textContent = fmt(turnover);
     $("stat-fee").textContent = FEE_PERCENT + "%";
+
+    $("hero-active-count").textContent = active;
+    $("hero-completed-count").textContent = completed;
+    $("hero-dispute-count").textContent = disputed;
+    $("hero-runtime-state").textContent = isDemo() ? "Демо режим" : "Backend online";
+
+    if (total === 0) {
+      $("hero-kicker").textContent = "Готово к старту";
+      $("hero-activity-text").textContent =
+        "Создайте первую сделку и включите современный поток работы: интерфейс уже готов к роли покупателя, продавца и арбитра.";
+    } else if (disputed > 0) {
+      $("hero-kicker").textContent = "Повышенный фокус";
+      $("hero-activity-text").textContent =
+        disputed + " спор(а/ов) требуют внимания. Параллельно активны " + active +
+        " сделок(и), а завершённых кейсов уже " + completed + ".";
+    } else if (active > 0) {
+      $("hero-kicker").textContent = "Escrow flow online";
+      $("hero-activity-text").textContent =
+        active + " активных сделок(и) в потоке. Завершено " + completed +
+        ", оборот подтверждённых USDT-кейсов: " + fmt(turnover) + ".";
+    } else {
+      $("hero-kicker").textContent = "Архив синхронизирован";
+      $("hero-activity-text").textContent =
+        "Активных сделок сейчас нет, но история уже показывает " + completed +
+        " завершённых кейсов. Можно безопасно запускать следующий.";
+    }
+
+    document.body.setAttribute("data-runtime", isDemo() ? "demo" : "live");
+    document.body.setAttribute("data-deal-state", disputed ? "dispute" : (active ? "active" : (completed ? "settled" : "idle")));
   }
 
   function openSupport() {
@@ -942,6 +1040,7 @@
 
   /* ---------- Инициализация ---------- */
 
+  showScreen("screen-deals");
   renderPayMethods();
   recalcFee();
   resolveApi().then(function (ok) {

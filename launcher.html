@@ -1,0 +1,1112 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>NORTHCAT - Control Center</title>
+  <!-- Google Fonts -->
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+  
+  <style>
+    :root {
+      --bg: #09090b;
+      --surface: rgba(18, 18, 24, 0.6);
+      --surface-hover: rgba(255, 255, 255, 0.08);
+      --border: rgba(255, 255, 255, 0.08);
+      --border-accent: rgba(124, 58, 237, 0.4);
+      --text: #f4f4f5;
+      --text-secondary: #a1a1aa;
+      --accent: #8b5cf6;
+      --accent-rgb: 139, 92, 246;
+      --green: #10b981;
+      --red: #ef4444;
+      --yellow: #f59e0b;
+      --radius: 16px;
+      --transition: 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: 'Outfit', sans-serif;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    body {
+      background-color: var(--bg);
+      color: var(--text);
+      overflow: hidden;
+      height: 100vh;
+      height: 100dvh;
+      display: flex;
+    }
+
+    /* WebGL Canvas Background */
+    #shader-canvas {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: -1;
+      pointer-events: none;
+      opacity: 0.85;
+    }
+
+    /* Layout Wrapper */
+    .app-container {
+      display: flex;
+      width: 100%;
+      height: 100%;
+      position: relative;
+      z-index: 1;
+      backdrop-filter: blur(2px);
+    }
+
+    /* Sidebar Navigation */
+    .sidebar {
+      width: 280px;
+      border-right: 1px solid var(--border);
+      background: rgba(10, 10, 14, 0.7);
+      backdrop-filter: blur(30px);
+      -webkit-backdrop-filter: blur(30px);
+      display: flex;
+      flex-direction: column;
+      flex-shrink: 0;
+      padding: 24px 16px;
+      gap: 24px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 8px 12px;
+    }
+
+    .brand-logo {
+      width: 32px;
+      height: 32px;
+      background: linear-gradient(135deg, var(--accent), #d946ef);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 800;
+      color: #fff;
+      box-shadow: 0 0 20px rgba(139, 92, 246, 0.4);
+    }
+
+    .brand-name {
+      font-weight: 800;
+      font-size: 20px;
+      letter-spacing: -0.03em;
+      background: linear-gradient(to right, #fff, #a1a1aa);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .nav-list {
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+      overflow-y: auto;
+      flex: 1;
+    }
+
+    .nav-group-title {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--text-secondary);
+      padding: 0 12px;
+      margin-bottom: 8px;
+    }
+
+    .nav-items {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .nav-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 14px;
+      border-radius: 10px;
+      color: var(--text-secondary);
+      font-weight: 500;
+      font-size: 14px;
+      cursor: pointer;
+      transition: var(--transition);
+      border: 1px solid transparent;
+    }
+
+    .nav-item:hover {
+      background: var(--surface-hover);
+      color: var(--text);
+      transform: translateX(4px);
+    }
+
+    .nav-item.active {
+      background: rgba(139, 92, 246, 0.15);
+      border-color: var(--border-accent);
+      color: #fff;
+      font-weight: 600;
+    }
+
+    .nav-item-icon {
+      font-size: 18px;
+    }
+
+    /* Main Content Area */
+    .main-content {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .top-bar {
+      height: 70px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 32px;
+      background: rgba(10, 10, 14, 0.4);
+      backdrop-filter: blur(10px);
+    }
+
+    .status-panel {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .status-badge {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 14px;
+      border-radius: 99px;
+      font-size: 12px;
+      font-weight: 600;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--border);
+    }
+
+    .status-badge.running {
+      background: rgba(16, 185, 129, 0.1);
+      border-color: rgba(16, 185, 129, 0.2);
+      color: var(--green);
+    }
+
+    .status-badge.stopped {
+      background: rgba(239, 68, 68, 0.1);
+      border-color: rgba(239, 68, 68, 0.2);
+      color: var(--red);
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: currentColor;
+      box-shadow: 0 0 10px currentColor;
+    }
+
+    /* Panels Container */
+    .panels-container {
+      flex: 1;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .panel {
+      position: absolute;
+      inset: 0;
+      opacity: 0;
+      visibility: hidden;
+      transform: translateY(20px);
+      transition: opacity var(--transition), transform var(--transition), visibility var(--transition);
+      padding: 32px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+    }
+
+    .panel.active {
+      opacity: 1;
+      visibility: visible;
+      transform: translateY(0);
+    }
+
+    /* Cards */
+    .glass-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 24px;
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.4);
+      transition: var(--transition);
+    }
+
+    .glass-card:hover {
+      border-color: rgba(255, 255, 255, 0.12);
+    }
+
+    .card-title {
+      font-size: 18px;
+      font-weight: 700;
+      margin-bottom: 20px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      letter-spacing: -0.02em;
+    }
+
+    /* Statistics Widgets */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 20px;
+    }
+
+    .stat-widget {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .stat-val {
+      font-size: 32px;
+      font-weight: 800;
+      color: #fff;
+      letter-spacing: -0.03em;
+    }
+
+    .stat-lbl {
+      font-size: 12px;
+      text-transform: uppercase;
+      font-weight: 600;
+      color: var(--text-secondary);
+      letter-spacing: 0.05em;
+    }
+
+    /* Buttons */
+    .btn-group {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 12px 24px;
+      border-radius: 12px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: var(--transition);
+      border: 1px solid var(--border);
+      background: rgba(255, 255, 255, 0.04);
+      color: var(--text);
+      outline: none;
+    }
+
+    .btn:hover {
+      background: var(--surface-hover);
+      transform: translateY(-2px);
+    }
+
+    .btn:active {
+      transform: translateY(0);
+    }
+
+    .btn-primary {
+      background: var(--accent);
+      border-color: transparent;
+      color: #fff;
+      box-shadow: 0 4px 20px rgba(139, 92, 246, 0.3);
+    }
+
+    .btn-primary:hover {
+      background: #7c3aed;
+      box-shadow: 0 4px 24px rgba(139, 92, 246, 0.4);
+    }
+
+    .btn-danger {
+      background: rgba(239, 68, 68, 0.15);
+      border-color: rgba(239, 68, 68, 0.25);
+      color: var(--red);
+    }
+
+    .btn-danger:hover {
+      background: rgba(239, 68, 68, 0.25);
+      border-color: var(--red);
+    }
+
+    /* Logs view */
+    .logs-box {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 13px;
+      background: rgba(0, 0, 0, 0.55);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px;
+      height: 450px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      color: #cbd5e1;
+      line-height: 1.6;
+    }
+
+    /* Editor */
+    textarea {
+      width: 100%;
+      height: 380px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 14px;
+      background: rgba(0, 0, 0, 0.4);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px;
+      color: #fff;
+      outline: none;
+      resize: vertical;
+      margin-bottom: 16px;
+    }
+
+    textarea:focus {
+      border-color: var(--accent);
+    }
+
+    /* Interactive Phone Wrapper for MiniApp */
+    .phone-preview-container {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      flex: 1;
+      padding: 10px;
+    }
+
+    .phone-bezel {
+      width: 375px;
+      height: 760px;
+      background: #000;
+      border-radius: 48px;
+      padding: 12px;
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7), 0 0 0 4px #27272a;
+      position: relative;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .phone-screen {
+      flex: 1;
+      background: #111;
+      border-radius: 36px;
+      overflow: hidden;
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      border: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    .phone-notch {
+      width: 120px;
+      height: 25px;
+      background: #000;
+      position: absolute;
+      top: 0;
+      left: 50%;
+      transform: translateX(-50%);
+      border-bottom-left-radius: 16px;
+      border-bottom-right-radius: 16px;
+      z-index: 10;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+
+    .phone-notch-camera {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #1e293b;
+      margin-left: 20px;
+    }
+
+    .phone-iframe {
+      width: 100%;
+      height: 100%;
+      border: none;
+      background: #000;
+    }
+
+    /* Fullscreen iframe for configuration panel */
+    .config-iframe {
+      width: 100%;
+      height: 100%;
+      border: none;
+      border-radius: var(--radius);
+      background: transparent;
+    }
+
+    /* Custom scrollbar */
+    ::-webkit-scrollbar {
+      width: 8px;
+      height: 8px;
+    }
+    ::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 99px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: rgba(255, 255, 255, 0.2);
+    }
+  </style>
+</head>
+<body>
+
+  <!-- WebGL Shader Background Canvas -->
+  <canvas id="shader-canvas"></canvas>
+
+  <div class="app-container">
+    
+    <!-- Sidebar Navigation -->
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-logo">N</div>
+        <div class="brand-name">NORTHCAT</div>
+      </div>
+      
+      <nav class="nav-list">
+        <!-- Launcher Section -->
+        <div>
+          <div class="nav-group-title">🚀 ЛАУНЧЕР</div>
+          <div class="nav-items">
+            <div class="nav-item active" onclick="switchPanel('stats')">
+              <span class="nav-item-icon">📊</span>
+              <span>Статистика</span>
+            </div>
+            <div class="nav-item" onclick="switchPanel('tools')">
+              <span class="nav-item-icon">🛠️</span>
+              <span>Инструменты</span>
+            </div>
+            <div class="nav-item" onclick="switchPanel('monitoring')">
+              <span class="nav-item-icon">📺</span>
+              <span>Мониторинг</span>
+            </div>
+            <div class="nav-item" onclick="switchPanel('launch-control')">
+              <span class="nav-item-icon">🕹️</span>
+              <span>Управление запуском</span>
+            </div>
+            <div class="nav-item" onclick="switchPanel('env-config')">
+              <span class="nav-item-icon">📝</span>
+              <span>Настройка (.env)</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Mini App Section -->
+        <div>
+          <div class="nav-group-title">📱 МИНИАПП</div>
+          <div class="nav-items">
+            <div class="nav-item" onclick="switchPanel('miniapp-preview'); initMiniAppIframe();">
+              <span class="nav-item-icon">🖥️</span>
+              <span>Предпросмотр</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Settings Section -->
+        <div>
+          <div class="nav-group-title">⚙️ НАСТРОЙКА БОТА</div>
+          <div class="nav-items">
+            <div class="nav-item" onclick="switchPanel('settings-panel')">
+              <span class="nav-item-icon">🔩</span>
+              <span>Конфигуратор</span>
+            </div>
+          </div>
+        </div>
+      </nav>
+    </aside>
+
+    <!-- Main Content Panel -->
+    <main class="main-content">
+      
+      <!-- Top Status Bar -->
+      <div class="top-bar">
+        <h2 style="font-weight: 800; font-size: 20px; letter-spacing: -0.02em;">Control Center</h2>
+        <div class="status-panel">
+          <div id="statusBadge" class="status-badge stopped">
+            <div class="status-dot"></div>
+            <span>ОСТАНОВЛЕН</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Views Container -->
+      <div class="panels-container">
+        
+        <!-- Panel 1: Statistics -->
+        <section id="panel-stats" class="panel active">
+          <div class="glass-card">
+            <h3 class="card-title">📊 Статистика Системы</h3>
+            <div class="stats-grid">
+              <div class="stat-widget">
+                <span class="stat-val" id="stat-pid">-</span>
+                <span class="stat-lbl">PID Процесса</span>
+              </div>
+              <div class="stat-widget">
+                <span class="stat-val" id="stat-cpu">-</span>
+                <span class="stat-lbl">Нагрузка CPU</span>
+              </div>
+              <div class="stat-widget">
+                <span class="stat-val" id="stat-mem">-</span>
+                <span class="stat-lbl">Память RAM</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="glass-card">
+            <h3 class="card-title">💼 Статистика Сделок (База Данных)</h3>
+            <div class="stats-grid">
+              <div class="stat-widget">
+                <span class="stat-val" id="db-total">0</span>
+                <span class="stat-lbl">Всего сделок</span>
+              </div>
+              <div class="stat-widget">
+                <span class="stat-val" id="db-active">0</span>
+                <span class="stat-lbl">Активные сделки</span>
+              </div>
+              <div class="stat-widget">
+                <span class="stat-val" id="db-disputes">0</span>
+                <span class="stat-lbl">Открытые споры</span>
+              </div>
+              <div class="stat-widget">
+                <span class="stat-val" id="db-volume">0 USDT</span>
+                <span class="stat-lbl">Торговый оборот</span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Panel 2: Tools -->
+        <section id="panel-tools" class="panel">
+          <div class="glass-card">
+            <h3 class="card-title">🛠️ Дополнительные Инструменты</h3>
+            <p style="color: var(--text-secondary); margin-bottom: 20px; font-size: 14px; line-height: 1.5;">
+              Управляйте дополнительными возможностями платформы. Создайте безопасный публичный туннель для тестирования Mini App вне локальной сети или запустите CLI прямо на сервере.
+            </p>
+            <div class="btn-group">
+              <button class="btn btn-primary" id="btnTunnel" onclick="createTunnel()">🌐 Создать туннель (Cloudflare Tunnel)</button>
+              <button class="btn" onclick="openCLI()">🖥️ Запустить CLI эмулятор</button>
+            </div>
+            <div id="tunnelInfo" style="display: none; margin-top: 20px; padding: 16px; border-radius: 12px; background: rgba(139, 92, 246, 0.1); border: 1px solid var(--border-accent);">
+              <h4 style="font-size: 14px; font-weight: 700; margin-bottom: 8px;">🔗 Ваш публичный URL туннеля:</h4>
+              <a href="#" id="tunnelUrlLink" target="_blank" style="color: #a78bfa; font-family: monospace; font-size: 14px; word-break: break-all;">-</a>
+            </div>
+          </div>
+        </section>
+
+        <!-- Panel 3: Monitoring (Logs) -->
+        <section id="panel-monitoring" class="panel">
+          <div class="glass-card" style="display: flex; flex-direction: column; flex: 1; min-height: 500px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+              <h3 class="card-title" style="margin: 0;">📺 Мониторинг Логов</h3>
+              <button class="btn btn-danger" style="padding: 8px 16px; font-size: 12px;" onclick="clearLogs()">Очистить логи</button>
+            </div>
+            <div class="logs-box" id="logsView">Загрузка логов...</div>
+          </div>
+        </section>
+
+        <!-- Panel 4: Launch Control -->
+        <section id="panel-launch-control" class="panel">
+          <div class="glass-card">
+            <h3 class="card-title">🕹️ Управление Запуском Сервера</h3>
+            <p style="color: var(--text-secondary); margin-bottom: 24px; font-size: 14px;">
+              Запускайте бэкенд Telegram-бота в обычном режиме или с полной очисткой локальной базы данных сделок.
+            </p>
+            <div class="btn-group">
+              <button class="btn btn-primary" id="btnStart" onclick="startServer('normal')">▶️ Запустить Сервер</button>
+              <button class="btn btn-danger" id="btnStartReset" onclick="startServer('reset_db')">⚠️ Запуск с Очисткой БД</button>
+              <button class="btn btn-danger" id="btnStop" onclick="stopServer()" style="display: none;">⏹️ Остановить Сервер</button>
+            </div>
+          </div>
+        </section>
+
+        <!-- Panel 5: Env Configuration -->
+        <section id="panel-env-config" class="panel">
+          <div class="glass-card">
+            <h3 class="card-title">📝 Редактирование .env Файла</h3>
+            <div style="display: flex; gap: 12px; margin-bottom: 16px;">
+              <button class="btn" style="padding: 8px 16px; font-size: 12px;" onclick="loadPreset('dev_local')">Шаблон: Dev Local</button>
+              <button class="btn" style="padding: 8px 16px; font-size: 12px;" onclick="loadPreset('production')">Шаблон: Production</button>
+              <button class="btn btn-danger" style="padding: 8px 16px; font-size: 12px;" onclick="loadPreset('empty')">Очистить</button>
+            </div>
+            <textarea id="envEditor" placeholder="Загрузка содержимого .env..."></textarea>
+            <button class="btn btn-primary" onclick="saveEnv()">💾 Сохранить изменения</button>
+          </div>
+        </section>
+
+        <!-- Panel 6: MiniApp Preview -->
+        <section id="panel-miniapp-preview" class="panel" style="overflow: hidden; display: flex; flex-direction: column;">
+          <div style="display: flex; gap: 12px; margin-bottom: 16px; align-items: center;">
+            <span style="font-size: 14px; font-weight: 600; color: var(--text-secondary);">Источник:</span>
+            <select id="iframeSourceSelector" onchange="changeIframeSource()" style="background: rgba(0,0,0,0.5); border: 1px solid var(--border); color: #fff; padding: 6px 12px; border-radius: 8px; font-size: 13px; outline: none;">
+              <option value="local">Локальный (http://127.0.0.1:3000)</option>
+              <option value="tunnel">Через Туннель</option>
+            </select>
+            <button class="btn" style="padding: 6px 12px; font-size: 12px;" onclick="refreshMiniAppIframe()">🔄 Обновить</button>
+            <button class="btn" style="padding: 6px 12px; font-size: 12px;" onclick="openMiniAppInNewTab()">🌐 В новой вкладке</button>
+          </div>
+          
+          <div class="phone-preview-container">
+            <div class="phone-bezel">
+              <div class="phone-notch">
+                <div class="phone-notch-camera"></div>
+              </div>
+              <div class="phone-screen">
+                <iframe class="phone-iframe" id="miniapp-iframe" src="about:blank"></iframe>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Panel 7: Bot Settings Configuration (settings.html) -->
+        <section id="panel-settings-panel" class="panel" style="overflow: hidden; padding: 16px 32px 32px 32px;">
+          <iframe class="config-iframe" id="settings-iframe" src="/settings.html"></iframe>
+        </section>
+
+      </div>
+    </main>
+
+  </div>
+
+  <!-- WebGL Background Shader Script -->
+  <script>
+    const canvas = document.getElementById('shader-canvas');
+    const gl = canvas.getContext('webgl');
+
+    if (!gl) {
+      console.error('WebGL not supported');
+    }
+
+    // Resize canvas
+    function resizeCanvas() {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+      gl.viewport(0, 0, canvas.width, canvas.height);
+    }
+    window.addEventListener('resize', resizeCanvas);
+    resizeCanvas();
+
+    // Shader source codes
+    const vsSource = `
+      attribute vec2 position;
+      void main() {
+        gl_Position = vec4(position, 0.0, 1.0);
+      }
+    `;
+
+    const fsSource = `
+      precision highp float;
+      uniform vec2 u_resolution;
+      uniform float u_time;
+      uniform vec2 u_mouse;
+
+      void main() {
+        vec2 uv = gl_FragCoord.xy / u_resolution.xy;
+        vec2 p = (gl_FragCoord.xy - 0.5 * u_resolution.xy) / u_resolution.y;
+        
+        // Fluid Wave distortion
+        float d = length(p - u_mouse);
+        float wave = sin(d * 12.0 - u_time * 2.5) * 0.04 / (d + 0.15);
+        p += wave * (p - u_mouse);
+        
+        // Dynamic cyber glow
+        float r = sin(p.x * 2.0 + u_time * 0.4) * 0.5 + 0.5;
+        float g = sin(p.y * 2.5 - u_time * 0.3) * 0.5 + 0.5;
+        float b = sin((p.x + p.y) * 1.5 + u_time * 0.6) * 0.5 + 0.5;
+        
+        vec3 col = vec3(0.04, 0.02, 0.08) + vec3(r, g, b) * 0.06;
+        
+        // Purple & Violet nebula streams
+        float f = sin(uv.x * 4.0 + u_time * 0.15) * cos(uv.y * 4.0 - u_time * 0.15);
+        col += vec3(0.18, 0.08, 0.35) * (f * 0.5 + 0.5);
+        
+        // Blue ambient
+        col += vec3(0.05, 0.12, 0.25) * (1.0 - uv.y);
+        
+        // Vignette
+        float vign = uv.x * uv.y * (1.0 - uv.x) * (1.0 - uv.y);
+        vign = clamp(pow(16.0 * vign, 0.3), 0.0, 1.0);
+        col *= vign;
+        
+        gl_FragColor = vec4(col, 1.0);
+      }
+    `;
+
+    // Compile shader helper
+    function compileShader(source, type) {
+      const shader = gl.createShader(type);
+      gl.shaderSource(shader, source);
+      gl.compileShader(shader);
+      if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+        console.error('Shader compilation error:', gl.getShaderInfoLog(shader));
+        gl.deleteShader(shader);
+        return null;
+      }
+      return shader;
+    }
+
+    const vs = compileShader(vsSource, gl.VERTEX_SHADER);
+    const fs = compileShader(fsSource, gl.FRAGMENT_SHADER);
+
+    const program = gl.createProgram();
+    gl.attachShader(program, vs);
+    gl.attachShader(program, fs);
+    gl.linkProgram(program);
+
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+      console.error('Program linking error:', gl.getProgramInfoLog(program));
+    }
+
+    const positionAttributeLocation = gl.getAttribLocation(program, 'position');
+    const resolutionUniformLocation = gl.getUniformLocation(program, 'u_resolution');
+    const timeUniformLocation = gl.getUniformLocation(program, 'u_time');
+    const mouseUniformLocation = gl.getUniformLocation(program, 'u_mouse');
+
+    const positionBuffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+    const positions = [
+      -1, -1,
+       1, -1,
+      -1,  1,
+      -1,  1,
+       1, -1,
+       1,  1,
+    ];
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(positions), gl.STATIC_DRAW);
+
+    // Mouse interactive values
+    let mouseX = 0;
+    let mouseY = 0;
+    let targetMouseX = 0;
+    let targetMouseY = 0;
+
+    window.addEventListener('mousemove', (e) => {
+      targetMouseX = (e.clientX - window.innerWidth * 0.5) / window.innerHeight;
+      targetMouseY = -(e.clientY - window.innerHeight * 0.5) / window.innerHeight;
+    });
+
+    // Render loop
+    function render(time) {
+      time *= 0.001; // convert to seconds
+
+      // Interpolate mouse coordinates smoothly
+      mouseX += (targetMouseX - mouseX) * 0.08;
+      mouseY += (targetMouseY - mouseY) * 0.08;
+
+      gl.useProgram(program);
+
+      gl.enableVertexAttribArray(positionAttributeLocation);
+      gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+      gl.vertexAttribPointer(positionAttributeLocation, 2, gl.FLOAT, false, 0, 0);
+
+      gl.uniform2f(resolutionUniformLocation, canvas.width, canvas.height);
+      gl.uniform1f(timeUniformLocation, time);
+      gl.uniform2f(mouseUniformLocation, mouseX, mouseY);
+
+      gl.drawArrays(gl.TRIANGLES, 0, 6);
+
+      requestAnimationFrame(render);
+    }
+    requestAnimationFrame(render);
+  </script>
+
+  <!-- Navigation and Integration Script -->
+  <script>
+    // Tab switching
+    function switchPanel(panelId) {
+      // Deactivate all navigation items
+      document.querySelectorAll('.nav-item').forEach(item => {
+        item.classList.remove('active');
+      });
+
+      // Find active nav-item by panel handler
+      const activeItem = Array.from(document.querySelectorAll('.nav-item')).find(item => {
+        return item.getAttribute('onclick').includes(panelId);
+      });
+      if (activeItem) activeItem.classList.add('active');
+
+      // Swap active panel visibility
+      document.querySelectorAll('.panel').forEach(panel => {
+        panel.classList.remove('active');
+      });
+      const targetPanel = document.getElementById('panel-' + panelId);
+      if (targetPanel) {
+        targetPanel.classList.add('active');
+      }
+    }
+
+    // Global variables
+    let isRunning = false;
+    let serverPort = 3000;
+    let tunnelUrl = "";
+
+    // Fetch dashboard statistics and process state
+    async function fetchStatus() {
+      try {
+        const res = await fetch('/api/status');
+        const data = await res.json();
+        isRunning = data.running;
+        
+        const badge = document.getElementById('statusBadge');
+        const badgeText = badge.querySelector('span');
+        
+        if (isRunning) {
+          badge.className = 'status-badge running';
+          badgeText.textContent = '🟢 РАБОТАЕТ';
+          document.getElementById('btnStart').style.display = 'none';
+          document.getElementById('btnStartReset').style.display = 'none';
+          document.getElementById('btnStop').style.display = 'inline-flex';
+        } else {
+          badge.className = 'status-badge stopped';
+          badgeText.textContent = '🔴 ОСТАНОВЛЕН';
+          document.getElementById('btnStart').style.display = 'inline-flex';
+          document.getElementById('btnStartReset').style.display = 'inline-flex';
+          document.getElementById('btnStop').style.display = 'none';
+        }
+        
+        serverPort = data.port || 3000;
+        
+        document.getElementById('stat-pid').textContent = data.pid || '-';
+        document.getElementById('stat-cpu').textContent = data.cpu ? data.cpu + '%' : '-';
+        document.getElementById('stat-mem').textContent = data.mem ? data.mem + '%' : '-';
+      } catch (e) {
+        console.error('Status fetch error', e);
+      }
+    }
+
+    // Fetch deals DB stats
+    async function fetchDbStats() {
+      try {
+        const res = await fetch('/api/stats');
+        if (res.ok) {
+          const stats = await res.json();
+          document.getElementById('db-total').textContent = stats.totalDeals;
+          document.getElementById('db-active').textContent = stats.activeDeals;
+          document.getElementById('db-disputes').textContent = stats.disputeDeals;
+          document.getElementById('db-volume').textContent = (stats.volume || 0).toFixed(2) + ' USDT';
+        }
+      } catch (e) {
+        console.error('DB stats fetch error', e);
+      }
+    }
+
+    // Logs management
+    async function fetchLogs() {
+      try {
+        const res = await fetch('/api/logs');
+        const data = await res.json();
+        const logsView = document.getElementById('logsView');
+        const isScrolledToBottom = logsView.scrollHeight - logsView.clientHeight <= logsView.scrollTop + 20;
+        
+        logsView.textContent = data.logs || 'Логи пусты.';
+        
+        if (isScrolledToBottom) {
+          logsView.scrollTop = logsView.scrollHeight;
+        }
+      } catch (e) {}
+    }
+
+    async function clearLogs() {
+      if (!confirm('Очистить файл логов?')) return;
+      await fetch('/api/logs/clear', { method: 'POST' });
+      fetchLogs();
+    }
+
+    // Env editor management
+    async function loadEnv() {
+      const res = await fetch('/api/env');
+      const data = await res.json();
+      document.getElementById('envEditor').value = data.content || '';
+      
+      // Try to parse tunnelUrl from env
+      const match = (data.content || '').match(/PUBLIC_URL=(https:\/\/[^\s]+)/);
+      if (match) {
+        tunnelUrl = match[1];
+        const link = document.getElementById('tunnelUrlLink');
+        link.href = tunnelUrl;
+        link.textContent = tunnelUrl;
+        document.getElementById('tunnelInfo').style.display = 'block';
+      }
+    }
+
+    async function saveEnv() {
+      const content = document.getElementById('envEditor').value;
+      const res = await fetch('/api/env', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content })
+      });
+      if (res.ok) {
+        alert('Настройки .env успешно сохранены!');
+        loadEnv();
+        // Sync settings iframe if loaded
+        document.getElementById('settings-iframe').contentWindow.location.reload();
+      } else {
+        alert('Ошибка при сохранении .env файла');
+      }
+    }
+
+    async function loadPreset(preset) {
+      if (!confirm('Выбранный шаблон заменит текущие настройки .env. Продолжить?')) return;
+      const res = await fetch('/api/env/preset', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ preset })
+      });
+      const data = await res.json();
+      if (data.ok) {
+        document.getElementById('envEditor').value = data.content;
+        alert('Шаблон успешно применен!');
+      }
+    }
+
+    // Start/Stop servers
+    async function startServer(variant) {
+      if (variant === 'reset_db' && !confirm('Внимание! Данное действие сотрет файл deals.json. Вы уверены?')) return;
+      const res = await fetch('/api/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ variant })
+      });
+      const data = await res.json();
+      if (!data.ok) {
+        alert(data.error);
+      } else {
+        alert('Сервер успешно запущен!');
+        switchPanel('monitoring'); // switch to logs
+      }
+      fetchStatus();
+      fetchDbStats();
+      fetchLogs();
+    }
+
+    async function stopServer() {
+      if (!confirm('Остановить текущий процесс сервера?')) return;
+      const res = await fetch('/api/stop', { method: 'POST' });
+      const data = await res.json();
+      if (data.ok) {
+        alert('Сервер остановлен.');
+      }
+      fetchStatus();
+    }
+
+    // Tools logic
+    async function openCLI() {
+      try {
+        const res = await fetch('/api/cli', { method: 'POST' });
+        const data = await res.json();
+        if (data.ok) {
+          alert('Консоль CLI была открыта в отдельном окне.');
+        } else {
+          alert('Ошибка запуска консоли: ' + data.error);
+        }
+      } catch (e) {
+        alert('Ошибка: ' + e.message);
+      }
+    }
+
+    async function createTunnel() {
+      const btn = document.getElementById('btnTunnel');
+      btn.innerText = '⏳ Создание туннеля...';
+      btn.disabled = true;
+      try {
+        const res = await fetch('/api/tunnel', { method: 'POST' });
+        const data = await res.json();
+        if (data.ok) {
+          alert('✅ Публичный туннель запущен: ' + data.url + '\n\nКонфигурация .env автоматически обновлена. Пожалуйста, перезапустите сервер.');
+          tunnelUrl = data.url;
+          const link = document.getElementById('tunnelUrlLink');
+          link.href = tunnelUrl;
+          link.textContent = tunnelUrl;
+          document.getElementById('tunnelInfo').style.display = 'block';
+          loadEnv();
+        } else {
+          alert('❌ Ошибка создания туннеля: ' + data.error);
+        }
+      } catch (e) {
+        alert('Ошибка сети: ' + e.message);
+      }
+      btn.innerText = '🌐 Создать туннель (Cloudflare Tunnel)';
+      btn.disabled = false;
+    }
+
+    // Mini App preview iframe managers
+    function initMiniAppIframe() {
+      const iframe = document.getElementById('miniapp-iframe');
+      const source = document.getElementById('iframeSourceSelector').value;
+      let url = "about:blank";
+
+      if (source === 'local') {
+        url = window.location.origin.replace(':8000', ':3000') || ('http://127.0.0.1:3000/');
+      } else if (source === 'tunnel') {
+        if (!tunnelUrl) {
+          alert('Публичный туннель не создан. Сначала сгенерируйте его во вкладке "Инструменты".');
+          document.getElementById('iframeSourceSelector').value = 'local';
+          url = window.location.origin.replace(':8000', ':3000/');
+        } else {
+          url = tunnelUrl;
+        }
+      }
+      iframe.src = url;
+    }
+
+    function changeIframeSource() {
+      initMiniAppIframe();
+    }
+
+    function refreshMiniAppIframe() {
+      document.getElementById('miniapp-iframe').contentWindow.location.reload();
+    }
+
+    function openMiniAppInNewTab() {
+      const source = document.getElementById('iframeSourceSelector').value;
+      let url = window.location.origin.replace(':8000', ':3000/');
+      if (source === 'tunnel' && tunnelUrl) {
+        url = tunnelUrl;
+      }
+      window.open(url, '_blank');
+    }
+
+    // Auto-update dashboard
+    setInterval(fetchStatus, 3000);
+    setInterval(fetchDbStats, 3000);
+    setInterval(fetchLogs, 5000);
+
+    // Initial load
+    fetchStatus();
+    fetchDbStats();
+    fetchLogs();
+    loadEnv();
+  </script>
+</body>
+</html>
