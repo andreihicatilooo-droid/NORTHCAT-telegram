@@ -757,9 +757,15 @@
         icon: '🤖',
         title: 'Telegram-бот',
         fields: [
-          { key: 'BOT_TOKEN',       label: 'BOT_TOKEN',       type: 'password' },
-          { key: 'ADMIN_IDS',       label: 'ADMIN_IDS',       type: 'text', hint: 'Telegram ID через запятую' },
-          { key: 'ADMIN_GROUP_ID',  label: 'ADMIN_GROUP_ID',  type: 'text', hint: 'chat_id группы' },
+          { key: 'BOT_TOKEN',            label: 'BOT_TOKEN',            type: 'password' },
+          { key: 'BOT_NAME',             label: 'BOT_NAME',             type: 'text', hint: 'Имя бота в Telegram' },
+          { key: 'BOT_SHORT_DESCRIPTION', label: 'BOT_SHORT_DESCRIPTION', type: 'text', hint: 'Короткое описание' },
+          { key: 'BOT_DESCRIPTION',      label: 'BOT_DESCRIPTION',      type: 'text', hint: 'Полное описание' },
+          { key: 'BOT_MENU_BUTTON_TEXT',  label: 'BOT_MENU_BUTTON_TEXT',  type: 'text', hint: 'Текст кнопки меню' },
+          { key: 'BOT_MENU_BUTTON_URL',   label: 'BOT_MENU_BUTTON_URL',   type: 'text', hint: 'URL Mini App' },
+          { key: 'BOT_COMMANDS_JSON',     label: 'BOT_COMMANDS_JSON',     type: 'text', hint: 'JSON массива команд' },
+          { key: 'ADMIN_IDS',             label: 'ADMIN_IDS',             type: 'text', hint: 'Telegram ID через запятую' },
+          { key: 'ADMIN_GROUP_ID',        label: 'ADMIN_GROUP_ID',        type: 'text', hint: 'chat_id группы' },
         ]
       },
       {
@@ -828,12 +834,36 @@
       return window.location.origin;
     }
 
+    function toBase64UrlUtf8(text) {
+      try {
+        var bytes = new TextEncoder().encode(String(text || ''));
+        var binary = '';
+        for (var i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+        return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+      } catch (_) {
+        return '';
+      }
+    }
+
+    function fromBase64UrlUtf8(text) {
+      try {
+        var normalized = String(text || '').replace(/-/g, '+').replace(/_/g, '/');
+        while (normalized.length % 4) normalized += '=';
+        var binary = atob(normalized);
+        var bytes = new Uint8Array(binary.length);
+        for (var i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+        return new TextDecoder().decode(bytes);
+      } catch (_) {
+        return '';
+      }
+    }
+
     function getAuthHeaders() {
       const headers = { 'Content-Type': 'application/json' };
       try {
         const tg = window.Telegram && window.Telegram.WebApp;
         if (tg && tg.initData) {
-          headers['X-Telegram-Init-Data'] = tg.initData;
+          headers['X-Telegram-Init-Data-B64'] = toBase64UrlUtf8(tg.initData);
           return headers;
         }
       } catch (_) {}
@@ -842,6 +872,17 @@
         headers['X-Auth-Token'] = token;
       }
       return headers;
+    }
+
+    function encodeTelegramUser(widgetUser) {
+      var safe = widgetUser || {};
+      return {
+        id: safe.id,
+        first_name: safe.first_name,
+        last_name: safe.last_name,
+        username: safe.username,
+        photo_url: safe.photo_url
+      };
     }
 
     /* ============================================
@@ -1115,10 +1156,17 @@
       var container = document.getElementById('tg-login-widget');
       if (container && !container.hasChildNodes()) {
         window.onTelegramAuth = function (widgetUser) {
+          var payload = encodeTelegramUser(widgetUser);
           fetch(getApiBase() + '/api/auth/telegram', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(widgetUser)
+            body: JSON.stringify({
+              id: payload.id,
+              first_name: payload.first_name,
+              last_name: payload.last_name,
+              username: payload.username,
+              photo_url: payload.photo_url
+            })
           })
           .then(function (r) { return r.json(); })
           .then(function (res) {

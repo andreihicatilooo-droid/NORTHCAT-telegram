@@ -122,69 +122,6 @@ function normalizeBotProfile(profile) {
   };
 }
 
-function normalizeBotCommands(value) {
-  let commands = value;
-  if (typeof commands === "string") {
-    const raw = commands.trim();
-    if (!raw) commands = [];
-    else {
-      try {
-        commands = JSON.parse(raw);
-      } catch (e) {
-        commands = raw.split(/\r?\n/).map((line) => {
-          const trimmed = String(line || "").trim();
-          if (!trimmed) return null;
-          const parts = trimmed.split(/[\-|–|—]/);
-          const command = String(parts.shift() || "").trim().replace(/^\//, "");
-          const description = String(parts.join("-") || command).trim();
-          return command ? { command, description } : null;
-        }).filter(Boolean);
-      }
-    }
-  }
-
-  if (!Array.isArray(commands)) commands = [];
-  return commands
-    .map((item) => {
-      const command = String(item && item.command ? item.command : "").trim().replace(/^\//, "").slice(0, 32);
-      const description = String(item && item.description ? item.description : "").trim().slice(0, 256);
-      return command && description ? { command, description } : null;
-    })
-    .filter(Boolean);
-}
-
-function getDefaultBotCommands() {
-  return [
-    { command: "start", description: "Открыть CRB GA" },
-    { command: "app", description: "Кнопка запуска приложения" },
-    { command: "post", description: "Пост с кнопками на шаблоны сделок" },
-    { command: "deal", description: "Проверить сделку: /deal ID" },
-    { command: "support", description: "Поддержка" }
-  ];
-}
-
-function normalizeBotProfile(profile) {
-  const src = profile || {};
-  const shortDescription = String(src.shortDescription || src.short_description || "").trim() ||
-    "CRB GA — гарант безопасных сделок. Escrow, споры, арбитраж.";
-  const description = String(src.description || "").trim() ||
-    "CRB GA — гарант-сервис безопасных сделок.\n\n" +
-    "Средства покупателя блокируются у гаранта и выплачиваются продавцу только после подтверждения приёмки. Разногласия решает арбитр.\n\n" +
-    "Оплата: xRocket, Bitpapa, PGon, NicePay, RuKassa.";
-  const menuButtonText = String(src.menuButtonText || src.menu_button_text || "Открыть CRB GA").trim() || "Открыть CRB GA";
-  const menuButtonUrl = String(src.menuButtonUrl || src.menu_button_url || (PUBLIC_URL ? PUBLIC_URL + "/" : "")).trim();
-  const name = String(src.name || src.botName || src.bot_name || "").trim();
-  const commands = normalizeBotCommands(src.commands || src.commandsJson || src.commands_json);
-  return {
-    name: name.slice(0, 64),
-    shortDescription: shortDescription.slice(0, 120),
-    description: description.slice(0, 512),
-    menuButtonText: menuButtonText.slice(0, 64),
-    menuButtonUrl: menuButtonUrl,
-    commands: commands.length ? commands : getDefaultBotCommands()
-  };
-}
-
 const XROCKET_API_KEY = process.env.XROCKET_API_KEY || "";
 const XROCKET_API_URL = (process.env.XROCKET_API_URL || "https://pay.xrocket.tg").replace(/\/+$/, "");
 const PUBLIC_URL = (process.env.PUBLIC_URL || "").replace(/\/+$/, "");
@@ -477,8 +414,17 @@ function validateToken(token) {
 }
 
 function auth(req, res, next) {
+  const encodedInitData = req.header("X-Telegram-Init-Data-B64");
+  let initData = req.header("X-Telegram-Init-Data");
+  if (!initData && encodedInitData) {
+    try {
+      initData = Buffer.from(String(encodedInitData), "base64url").toString("utf8");
+    } catch (e) {
+      initData = "";
+    }
+  }
   const user =
-    validateInitData(req.header("X-Telegram-Init-Data")) ||
+    validateInitData(initData) ||
     validateToken(req.header("X-Auth-Token"));
   if (!user) {
     return res.status(401).json({ error: "Требуется авторизация через Telegram" });
