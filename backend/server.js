@@ -172,6 +172,11 @@ const LOCAL_ADMIN_ENABLED = process.env.LOCAL_ADMIN === "1" ||
 
 // Каталог данных (deals.json и т.п.) — вынесите на постоянный том в проде
 const DATA_DIR = process.env.DATA_DIR || __dirname;
+try {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+} catch (e) {
+  console.error("[db] Не удалось создать каталог данных DATA_DIR:", e.message);
+}
 
 const RUNTIME_SETTINGS_FILE = path.join(DATA_DIR, "runtime_settings.json");
 const DEFAULT_BOT_TOKEN = normalizedSecret(process.env.BOT_TOKEN);
@@ -494,7 +499,19 @@ function auth(req, res, next) {
 
 /* ---------- Счета: xRocket ---------- */
 
+// xRocket работает только с криптовалютами (RUB и подобное — через фиатные шлюзы)
+const XROCKET_CURRENCY = { USDT: "USDT", TON: "TONCOIN", TONCOIN: "TONCOIN", BTC: "BTC" };
+
+function xrocketCurrency(currency) {
+  return XROCKET_CURRENCY[String(currency || "").toUpperCase()] || null;
+}
+
 async function createXRocketInvoice(deal) {
+  if (!XROCKET_API_KEY) throw new Error("xRocket не настроен (XROCKET_API_KEY)");
+  const currency = xrocketCurrency(deal.currency);
+  if (!currency) {
+    throw new Error(`xRocket не поддерживает валюту ${deal.currency} — выберите крипто-валюту или фиатный шлюз`);
+  }
   const res = await fetch(XROCKET_API_URL + "/tg-invoices", {
     method: "POST",
     headers: {
@@ -503,7 +520,7 @@ async function createXRocketInvoice(deal) {
     },
     body: JSON.stringify({
       amount: deal.total,
-      currency: deal.currency === "USDT" ? "USDT" : deal.currency === "TON" ? "TONCOIN" : deal.currency,
+      currency,
       description: `Сделка ${deal.id}: ${deal.title}`.slice(0, 1000),
       payload: deal.id,
       numPayments: 1,
@@ -677,13 +694,23 @@ async function payoutSeller(deal) {
     return false;
   }
 
-  if (deal.method !== "xrocket") {
-    console.log(`[payout] Сделка ${deal.id}: метод ${deal.method} требует ручной выплаты продавцу ID ${sellerId}`);
+  // Фиатные шлюзы (RuKassa/NicePay/PGon) и Bitpapa — выплата продавцу вручную.
+  // Уведомляем гаранта, чтобы завершённая сделка не осталась без выплаты.
+  if (deal.method !== "xrocket" || !xrocketCurrency(deal.currency)) {
+    console.log(`[payout] Сделка ${deal.id}: метод ${deal.method}/${deal.currency} требует ручной выплаты продавцу ID ${sellerId}`);
+    notifyAdmins(
+      `💸 Сделка <b>${deal.id}</b> завершена. Метод «${deal.method}» (${deal.currency}) не поддерживает автовыплату.\n` +
+      `Выплатите продавцу (ID ${sellerId}) <b>${formatAmount(deal.amount, deal.currency)}</b> вручную.`
+    ).catch(() => {});
     return false;
   }
 
   if (!XROCKET_API_KEY) {
     console.warn(`[payout] Сделка ${deal.id}: xRocket API ключ не настроен для автовыплаты`);
+    notifyAdmins(
+      `⚠️ Сделка <b>${deal.id}</b> завершена, но XROCKET_API_KEY не настроен — ` +
+      `выплатите продавцу (ID ${sellerId}) <b>${formatAmount(deal.amount, deal.currency)}</b> вручную.`
+    ).catch(() => {});
     return false;
   }
 
@@ -754,26 +781,42 @@ function groupLinkButton(text) {
   return { inline_keyboard: [[{ text, url: PUBLIC_URL + "/?admin=1" }]] };
 }
 
-async function notifyAdminGroup(text) {
+// Инлайн-кнопки для управления сделкой прямо из Telegram
+function payConfirmKeyboard(deal) {
+  return { inline_keyboard: [[
+    { text: "✅ Подтвердить оплату", callback_data: "apay:" + deal.id }
+  ]] };
+}
+
+function disputeKeyboard(deal) {
+  return { inline_keyboard: [[
+    { text: "✅ Продавцу", callback_data: `ars:${deal.id}:seller` },
+    { text: "🔄 Покупателю", callback_data: `ars:${deal.id}:buyer` }
+  ]] };
+}
+
+async function notifyAdminGroup(text, keyboard) {
   if (!adminGroup.chatId) return false;
   const res = await tgCall("sendMessage", {
     chat_id: adminGroup.chatId,
     text,
     parse_mode: "HTML",
-    reply_markup: groupLinkButton("Открыть сервис")
+    reply_markup: keyboard || groupLinkButton("Открыть сервис")
   }).catch(() => ({ ok: false }));
   return !!(res && res.ok);
 }
 
-// Оповестить всех гарантов/арбитров
-async function notifyAdmins(text) {
-  if (await notifyAdminGroup(text)) return;
+// Оповестить всех гарантов/арбитров (с опциональными кнопками действий).
+// Уведомление уходит в привязанную админ-группу, иначе — каждому админу лично.
+async function notifyAdmins(text, keyboard) {
+  if (await notifyAdminGroup(text, keyboard)) return;
+  const markup = keyboard || appButton("Открыть админ-панель");
   for (const adminId of ADMIN_IDS) {
     await tgCall("sendMessage", {
       chat_id: adminId,
       text,
       parse_mode: "HTML",
-      reply_markup: appButton("Открыть админ-панель")
+      reply_markup: markup
     }).catch(() => {});
   }
 }
@@ -1007,7 +1050,13 @@ app.post("/api/deals/:id/status", auth, (req, res) => {
   };
   if (notifyMap[next]) {
     notifyParties(deal, notifyMap[next]).catch(() => {});
-    if (next === "dispute") notifyAdmins(`⚠️ Новый спор: <b>${deal.id}</b> «${deal.title}»\nСумма: ${deal.total} ${deal.currency}`).catch(() => {});
+    if (next === "dispute") {
+      notifyAdmins(
+        `⚠️ Новый спор: <b>${deal.id}</b> «${deal.title}»\nСумма: ${deal.total} ${deal.currency}\n` +
+        `Решите спор кнопкой ниже или в админ-панели.`,
+        disputeKeyboard(deal)
+      ).catch(() => {});
+    }
   }
   if (next === "completed") {
     // Инициируем автовыплату продавцу через xRocket, если применимо
@@ -1061,7 +1110,8 @@ app.post("/api/deals/:id/bitpapa-claim", auth, async (req, res) => {
   } else {
     notifyAdmins(
       `💳 Покупатель по сделке <b>${deal.id}</b> «${deal.title}» сообщил об оплате через Bitpapa.\n` +
-      `Сумма: ${deal.total} ${deal.currency} — проверьте поступление.`
+      `Сумма: ${deal.total} ${deal.currency} — проверьте поступление и подтвердите кнопкой ниже.`,
+      payConfirmKeyboard(deal)
     ).catch(() => {});
   }
   persist();
@@ -1491,18 +1541,13 @@ app.post("/api/admin/env", adminRuntimeAccess, async (req, res) => {
   res.json({ env: getEnvSnapshot() });
 });
 
-// Админ: решение спора — "seller" (выплата продавцу) или "buyer" (возврат покупателю)
-app.post("/api/admin/deals/:id/resolve", auth, adminOnly, (req, res) => {
-  const deal = findDeal(req.params.id);
-  if (!deal || deal.status !== "dispute") {
-    return res.status(400).json({ error: "Сделка не найдена или спора нет" });
-  }
-  const resolution = req.body && req.body.resolution;
-  if (resolution !== "seller" && resolution !== "buyer") {
-    return res.status(400).json({ error: "resolution: seller | buyer" });
-  }
+// Общая логика решения спора — используется и HTTP-роутом, и Telegram-кнопками.
+// Возвращает true при успешном решении.
+function resolveDispute(deal, resolution, actorId) {
+  if (!deal || deal.status !== "dispute") return false;
+  if (resolution !== "seller" && resolution !== "buyer") return false;
   deal.status = resolution === "seller" ? "completed" : "cancelled";
-  deal.resolvedBy = req.tgUser.id;
+  deal.resolvedBy = Number.isFinite(Number(actorId)) ? Number(actorId) : null;
   deal.history.push({ status: deal.status, ts: Date.now() });
   persist();
   if (resolution === "seller") {
@@ -1514,7 +1559,31 @@ app.post("/api/admin/deals/:id/resolve", auth, adminOnly, (req, res) => {
     ? `✅ <b>Спор по сделке ${deal.id}</b> решён в пользу продавца. Средства выплачены.`
     : `🔄 <b>Спор по сделке ${deal.id}</b> решён в пользу покупателя. Средства возвращены.`;
   notifyParties(deal, resolveText).catch(() => {});
-  console.log(`[arbitr] Сделка ${deal.id}: спор решён в пользу ${resolution === "seller" ? "продавца" : "покупателя"}`);
+  console.log(`[arbitr] Сделка ${deal.id}: спор решён в пользу ${resolution === "seller" ? "продавца" : "покупателя"} (актор ${actorId})`);
+  return true;
+}
+
+// Общая логика ручного подтверждения оплаты гарантом.
+// Возвращает true при успешном переходе new → paid.
+function confirmDealPaidByAdmin(deal, actorId) {
+  if (!deal || deal.status !== "new") return false;
+  markPaid(deal, "admin:" + actorId);
+  persist();
+  notifyParties(deal, `✅ <b>Сделка ${deal.id}</b>: оплата подтверждена гарантом. Средства заблокированы.\n<i>Продавец, исполните условия сделки.</i>`).catch(() => {});
+  return true;
+}
+
+// Админ: решение спора — "seller" (выплата продавцу) или "buyer" (возврат покупателю)
+app.post("/api/admin/deals/:id/resolve", auth, adminOnly, (req, res) => {
+  const deal = findDeal(req.params.id);
+  if (!deal || deal.status !== "dispute") {
+    return res.status(400).json({ error: "Сделка не найдена или спора нет" });
+  }
+  const resolution = req.body && req.body.resolution;
+  if (resolution !== "seller" && resolution !== "buyer") {
+    return res.status(400).json({ error: "resolution: seller | buyer" });
+  }
+  resolveDispute(deal, resolution, req.tgUser.id);
   res.json(deal);
 });
 
@@ -1524,9 +1593,7 @@ app.post("/api/deals/:id/mark-paid", auth, adminOnly, (req, res) => {
   if (!deal || deal.status !== "new") {
     return res.status(400).json({ error: "Сделка не найдена или уже оплачена" });
   }
-  markPaid(deal, "admin:" + req.tgUser.id);
-  persist();
-  notifyParties(deal, `✅ <b>Сделка ${deal.id}</b>: оплата подтверждена гарантом. Средства заблокированы.\n<i>Продавец, исполните условия сделки.</i>`).catch(() => {});
+  confirmDealPaidByAdmin(deal, req.tgUser.id);
   res.json(deal);
 });
 
@@ -1742,8 +1809,9 @@ async function setupBot() {
         { command: "start", description: "Открыть CRB GA" },
         { command: "app", description: "Кнопка запуска приложения" },
         { command: "post", description: "Пост с кнопками на шаблоны сделок" },
-        { command: "admin", description: "Админ-меню гаранта" },
+        { command: "admin", description: "Админ-меню: оплаты и споры" },
         { command: "group", description: "Привязать текущую группу как админскую" },
+        { command: "setup", description: "Перенастроить профиль и команды бота" },
         { command: "deal", description: "Проверить сделку: /deal ID" },
         { command: "support", description: "Поддержка" }
       ]
@@ -1799,6 +1867,80 @@ async function handleInlineQuery(inline) {
     is_personal: true,
     results
   });
+}
+
+// Роутер callback-кнопок: инлайн-приглашения и админ-действия
+async function handleCallback(cq) {
+  const data = String(cq.data || "");
+  if (data.startsWith("tpl:")) return handleTemplateCallback(cq);
+  if (data.startsWith("apay:") || data.startsWith("ars:")) return handleAdminCallback(cq);
+  await tgCall("answerCallbackQuery", { callback_query_id: cq.id }).catch(() => {});
+}
+
+// Убрать кнопки у сообщения, чтобы действие нельзя было повторить
+async function clearMessageButtons(cq) {
+  if (!cq.message || !cq.message.chat) return;
+  await tgCall("editMessageReplyMarkup", {
+    chat_id: cq.message.chat.id,
+    message_id: cq.message.message_id,
+    reply_markup: { inline_keyboard: [] }
+  }).catch(() => {});
+}
+
+// Управление сделкой из Telegram: подтверждение оплаты и решение споров (только ADMIN_IDS)
+async function handleAdminCallback(cq) {
+  const fromId = cq.from && Number(cq.from.id);
+  if (!ADMIN_IDS.includes(fromId)) {
+    await tgCall("answerCallbackQuery", {
+      callback_query_id: cq.id,
+      text: "Действие доступно только гаранту.",
+      show_alert: true
+    }).catch(() => {});
+    return;
+  }
+  const data = String(cq.data || "");
+
+  if (data.startsWith("apay:")) {
+    const deal = findDeal(data.slice(5));
+    if (!deal) {
+      await tgCall("answerCallbackQuery", { callback_query_id: cq.id, text: "Сделка не найдена.", show_alert: true });
+      return;
+    }
+    const ok = confirmDealPaidByAdmin(deal, fromId);
+    await tgCall("answerCallbackQuery", {
+      callback_query_id: cq.id,
+      text: ok ? `Оплата по ${deal.id} подтверждена.` : "Сделка уже оплачена или закрыта.",
+      show_alert: !ok
+    });
+    if (ok) {
+      await clearMessageButtons(cq);
+      await notifyAdmins(`✅ Оплата по сделке <b>${deal.id}</b> подтверждена гарантом (ID ${fromId}).`);
+    }
+    return;
+  }
+
+  if (data.startsWith("ars:")) {
+    const parts = data.split(":"); // ars:<id>:<resolution>
+    const deal = findDeal(parts[1]);
+    const resolution = parts[2];
+    if (!deal) {
+      await tgCall("answerCallbackQuery", { callback_query_id: cq.id, text: "Сделка не найдена.", show_alert: true });
+      return;
+    }
+    const ok = resolveDispute(deal, resolution, fromId);
+    await tgCall("answerCallbackQuery", {
+      callback_query_id: cq.id,
+      text: ok
+        ? `Спор по ${deal.id} решён в пользу ${resolution === "seller" ? "продавца" : "покупателя"}.`
+        : "Спор уже закрыт или сделка не в статусе спора.",
+      show_alert: !ok
+    });
+    if (ok) {
+      await clearMessageButtons(cq);
+      await notifyAdmins(`⚖️ Спор по сделке <b>${deal.id}</b> решён гарантом (ID ${fromId}) в пользу ${resolution === "seller" ? "продавца" : "покупателя"}.`);
+    }
+    return;
+  }
 }
 
 async function handleTemplateCallback(cq) {
@@ -1920,6 +2062,45 @@ async function sendDealSummary(chatId, deal, viewer, useAppButton) {
   });
 }
 
+// Отправить в чат карточки с кнопками действий по всем открытым задачам гаранта:
+// заявки об оплате Bitpapa (кнопка подтверждения) и споры (кнопки решения).
+async function sendPendingAdminItems(chatId) {
+  const pendingPay = deals
+    .filter((d) => d.status === "new" && d.bitpapaClaimedAt)
+    .sort((a, b) => (b.bitpapaClaimedAt || 0) - (a.bitpapaClaimedAt || 0))
+    .slice(0, 10);
+  const disputes = deals
+    .filter((d) => d.status === "dispute")
+    .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
+    .slice(0, 10);
+
+  if (!pendingPay.length && !disputes.length) {
+    await tgCall("sendMessage", { chat_id: chatId, text: "Открытых задач нет: подтверждений оплаты и споров не найдено." });
+    return;
+  }
+
+  for (const deal of pendingPay) {
+    await tgCall("sendMessage", {
+      chat_id: chatId,
+      parse_mode: "HTML",
+      text:
+        `💳 <b>${deal.id}</b> «${deal.title}»\n` +
+        `Покупатель сообщил об оплате (${deal.method}). Сумма: ${formatAmount(deal.total, deal.currency)}.`,
+      reply_markup: payConfirmKeyboard(deal)
+    }).catch(() => {});
+  }
+  for (const deal of disputes) {
+    await tgCall("sendMessage", {
+      chat_id: chatId,
+      parse_mode: "HTML",
+      text:
+        `⚠️ <b>${deal.id}</b> «${deal.title}»\n` +
+        `Спор на арбитраже. Сумма: ${formatAmount(deal.total, deal.currency)}.`,
+      reply_markup: disputeKeyboard(deal)
+    }).catch(() => {});
+  }
+}
+
 async function handleGroupMessage(msg) {
   const chat = msg.chat;
   if (!chat || (chat.type !== "group" && chat.type !== "supergroup")) return;
@@ -2001,6 +2182,7 @@ async function handleGroupMessage(msg) {
         `Текущая группа: ${adminGroupLabel()}`,
       reply_markup: groupLinkButton("Открыть админ-панель")
     });
+    await sendPendingAdminItems(chat.id);
     return;
   }
 
@@ -2027,7 +2209,7 @@ async function handleUpdate(upd) {
     return;
   }
   if (upd.callback_query) {
-    await handleTemplateCallback(upd.callback_query);
+    await handleCallback(upd.callback_query);
     return;
   }
   if (!msg) return;
@@ -2075,8 +2257,22 @@ async function handleUpdate(upd) {
         `Активных: ${active}\n` +
         `Споров на арбитраже: ${disputes}\n` +
         `Ожидают подтверждения оплаты: ${awaiting}\n\n` +
-        "Подтверждение оплат и решение споров — во вкладке «Админ» приложения.",
+        "Подтверждайте оплаты и решайте споры прямо здесь кнопками ниже или во вкладке «Админ» приложения.",
       reply_markup: appButton("Открыть админ-панель")
+    });
+    await sendPendingAdminItems(chatId);
+  } else if (cmd === "/setup") {
+    if (!isAdmin) {
+      await tgCall("sendMessage", { chat_id: chatId, text: "Команда доступна только гаранту." });
+      return;
+    }
+    await setupBot();
+    await tgCall("sendMessage", {
+      chat_id: chatId,
+      text:
+        "🔧 Бот перенастроен: имя, описание, команды и кнопка меню обновлены из текущего профиля.\n" +
+        (PUBLIC_URL ? `Mini App: ${PUBLIC_URL}/` : "PUBLIC_URL не задан — кнопка меню Mini App не установлена."),
+      reply_markup: appButton("Открыть CRB GA")
     });
   } else if (cmd === "/post") {
     const templates = getDealTemplates(msg.from.id);
@@ -2146,12 +2342,22 @@ async function botLoop() {
   const last = await tgCall("getUpdates", { offset: -1, limit: 1 });
   if (last.ok && last.result.length) offset = last.result[0].update_id + 1;
 
+  let backoff = 1000;
   for (;;) {
     const res = await tgCall("getUpdates", { offset, timeout: 50 });
     if (!res.ok) {
-      await new Promise((r) => setTimeout(r, 3000));
+      // Неверный/отозванный токен — нет смысла крутить цикл, ждём смены токена
+      if (res.error_code === 401 || res.error_code === 404) {
+        console.error("[bot] BOT_TOKEN отклонён Telegram — long-polling остановлен. Обновите токен в админ-панели или /setup.");
+        botLoopStarted = false;
+        return;
+      }
+      // 409 (конфликт с другим getUpdates/webhook) и сетевые ошибки — экспоненциальный бэкофф
+      await new Promise((r) => setTimeout(r, backoff));
+      backoff = Math.min(backoff * 2, 30000);
       continue;
     }
+    backoff = 1000;
     for (const upd of res.result) {
       offset = upd.update_id + 1;
       handleUpdate(upd).catch((e) => console.error("[bot] update:", e.message));

@@ -448,6 +448,23 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+/* Кнопки действий гаранта внутри карточки сделки (админ-панель) */
+.deal-item-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  position: relative;
+  z-index: 1;
+}
+
+.deal-item-actions .btn {
+  flex: 1 1 auto;
+  margin: 0;
+}
+
 /* ---------- Статусы ---------- */
 
 .status-chip {
