@@ -1,3 +1,10 @@
 node_modules/
+.env
 backend/.env
+backend/admin_group.json
 backend/deals.json
+backend/runtime_settings.json
+backend/user_chats.json
+backend/port.tmp
+*.log
+*.tmp

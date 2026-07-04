@@ -183,43 +183,116 @@
         </ol>
       </div>
 
+      <button class="btn btn--primary btn--small" id="guides-button" type="button">Гайды</button>
+
+      <div class="info-card guide-card" id="guides-panel" hidden>
+        <div class="guide-card-head">
+          <div>
+            <div class="info-title">Гайды по сервису</div>
+            <p class="guide-subtitle">Коротко и по делу: как пользоваться CRB GA без гадания на пикселях.</p>
+          </div>
+          <span class="guide-badge">Mini App</span>
+        </div>
+
+        <div class="guide-section">
+          <div class="guide-section-title">Что это за сервис</div>
+          <p class="guide-text">
+            CRB GA — это escrow-сервис внутри Telegram. Покупатель переводит средства,
+            гарант удерживает их до подтверждения результата, а продавец получает выплату
+            только после приёмки или решения арбитра.
+          </p>
+        </div>
+
+        <div class="guide-section">
+          <div class="guide-section-title">Как провести сделку</div>
+          <div class="guide-steps">
+            <div class="guide-step">
+              <span class="guide-step-num">1</span>
+              <div>
+                <strong>Создайте сделку</strong>
+                <p>Укажите роль, контрагента, предмет сделки, условия, сумму и способ оплаты.</p>
+              </div>
+            </div>
+            <div class="guide-step">
+              <span class="guide-step-num">2</span>
+              <div>
+                <strong>Покупатель оплачивает</strong>
+                <p>Средства блокируются у гаранта через счёт или ручной перевод по выбранному методу.</p>
+              </div>
+            </div>
+            <div class="guide-step">
+              <span class="guide-step-num">3</span>
+              <div>
+                <strong>Продавец исполняет условия</strong>
+                <p>После выполнения сделки продавец отмечает исполнение прямо в карточке сделки.</p>
+              </div>
+            </div>
+            <div class="guide-step">
+              <span class="guide-step-num">4</span>
+              <div>
+                <strong>Покупатель подтверждает приёмку</strong>
+                <p>После подтверждения гарант выпускает выплату продавцу за вычетом комиссии.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="guide-grid">
+          <div class="guide-panel">
+            <div class="guide-section-title">Оплата</div>
+            <p class="guide-text">Выберите платёжку при создании сделки. Для автоматических методов сервис создаёт счёт, для ручных — показывает реквизиты и код сделки.</p>
+          </div>
+          <div class="guide-panel">
+            <div class="guide-section-title">Споры</div>
+            <p class="guide-text">Если условия нарушены, любая сторона может открыть спор. Арбитр смотрит историю сделки и принимает решение.</p>
+          </div>
+        </div>
+
+        <div class="guide-tips">
+          <div class="guide-tip">
+            <strong>Совет</strong>
+            <span>Всегда подробно заполняйте условия: это ваш главный аргумент в споре.</span>
+          </div>
+          <div class="guide-tip">
+            <strong>Важно</strong>
+            <span>Не отправляйте товар или доступ до статуса «Оплачена» — иначе рискуете сделать подарок мошеннику.</span>
+          </div>
+        </div>
+      </div>
+
       <button class="btn btn--outline" id="support-button">Связаться с поддержкой</button>
       <button class="btn btn--ghost" id="logout-button" hidden>Выйти</button>
     </main>
 
-    <!-- Экран: админ-панель (виден только гаранту) -->
+    <!-- Экран: админ-панель гаранта (видна только для ADMIN_IDS) -->
     <main class="screen" id="screen-admin">
       <div class="screen-head">
         <h2 class="screen-title">Админ-панель</h2>
-        <button class="btn btn--outline btn--small" id="admin-refresh">Обновить</button>
+        <button class="btn btn--ghost btn--small" id="admin-refresh" type="button">Обновить</button>
       </div>
-      <div class="stats-grid">
-        <div class="stat-card">
-          <div class="stat-value" id="admin-stat-total">0</div>
-          <div class="stat-label">Сделок</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-value" id="admin-stat-active">0</div>
-          <div class="stat-label">Активных</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-value" id="admin-stat-disputes">0</div>
-          <div class="stat-label">Споров</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-value" id="admin-stat-awaiting">0</div>
-          <div class="stat-label">Ждут оплаты</div>
-        </div>
+      <p class="screen-subtitle">Подтверждайте оплаты и решайте споры. Те же действия доступны из Telegram по кнопкам в уведомлениях бота.</p>
+
+      <div class="stats-grid" id="admin-stats"></div>
+
+      <div class="filter-row" id="admin-filter-row">
+        <button class="chip chip--active" data-admin-filter="pending">Ожидают оплату</button>
+        <button class="chip" data-admin-filter="dispute">Споры</button>
+        <button class="chip" data-admin-filter="active">Активные</button>
+        <button class="chip" data-admin-filter="all">Все</button>
       </div>
+
       <ul class="deal-list" id="admin-list"></ul>
       <div class="empty-state" id="admin-empty">
         <div class="empty-mark">—</div>
-        <p>Сделок пока нет.</p>
+        <p>Нет задач по выбранному фильтру.</p>
       </div>
+
+      <button class="btn btn--outline" id="admin-settings-link" type="button">Серверные настройки и API-ключи</button>
     </main>
 
     <!-- Нижняя навигация -->
     <nav class="tabbar">
+      <div class="tabbar-indicator" id="tabbar-indicator"></div>
       <button class="tab tab--active" data-screen="screen-deals">
         <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
         <span class="tab-label">Сделки</span>
@@ -232,14 +305,18 @@
         <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="3.5"/><path d="M5 19c1.4-3 4-4.5 7-4.5s5.6 1.5 7 4.5"/></svg>
         <span class="tab-label">Профиль</span>
       </button>
-      <button class="tab" data-screen="screen-admin" id="tab-admin" hidden>
-        <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z"/></svg>
+      <button class="tab" data-screen="screen-admin" id="admin-tab" hidden>
+        <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3l7 3v6c0 4-3 7-7 9-4-2-7-5-7-9V6l7-3z"/></svg>
         <span class="tab-label">Админ</span>
       </button>
     </nav>
 
+    <!-- Тост-уведомление -->
+    <div class="toast" id="toast"></div>
+
   </div>
   <script src="js/config.js"></script>
   <script src="js/app.js"></script>
+  <script src="js/ui.js"></script>
 </body>
 </html>
