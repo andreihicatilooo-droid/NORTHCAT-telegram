@@ -317,6 +317,32 @@
       <button class="btn btn--ghost" id="logout-button" hidden>Выйти</button>
     </main>
 
+    <!-- Экран: админ-панель гаранта (видна только для ADMIN_IDS) -->
+    <main class="screen" id="screen-admin">
+      <div class="screen-head">
+        <h2 class="screen-title">Админ-панель</h2>
+        <button class="btn btn--ghost btn--small" id="admin-refresh" type="button">Обновить</button>
+      </div>
+      <p class="screen-subtitle">Подтверждайте оплаты и решайте споры. Те же действия доступны из Telegram по кнопкам в уведомлениях бота.</p>
+
+      <div class="stats-grid" id="admin-stats"></div>
+
+      <div class="filter-row" id="admin-filter-row">
+        <button class="chip chip--active" data-admin-filter="pending">Ожидают оплату</button>
+        <button class="chip" data-admin-filter="dispute">Споры</button>
+        <button class="chip" data-admin-filter="active">Активные</button>
+        <button class="chip" data-admin-filter="all">Все</button>
+      </div>
+
+      <ul class="deal-list" id="admin-list"></ul>
+      <div class="empty-state" id="admin-empty">
+        <div class="empty-mark">—</div>
+        <p>Нет задач по выбранному фильтру.</p>
+      </div>
+
+      <button class="btn btn--outline" id="admin-settings-link" type="button">Серверные настройки и API-ключи</button>
+    </main>
+
     <!-- Нижняя навигация -->
     <nav class="tabbar">
       <div class="tabbar-indicator" id="tabbar-indicator"></div>
@@ -331,6 +357,10 @@
       <button class="tab" data-screen="screen-profile">
         <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="3.5"/><path d="M5 19c1.4-3 4-4.5 7-4.5s5.6 1.5 7 4.5"/></svg>
         <span class="tab-label">Профиль</span>
+      </button>
+      <button class="tab" data-screen="screen-admin" id="admin-tab" hidden>
+        <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3l7 3v6c0 4-3 7-7 9-4-2-7-5-7-9V6l7-3z"/></svg>
+        <span class="tab-label">Админ</span>
       </button>
     </nav>
 

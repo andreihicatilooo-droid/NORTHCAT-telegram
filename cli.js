@@ -148,7 +148,7 @@ function renderDashboard() {
   console.log(`Бот в сети:    ${colors.fgYellow}${cfg.botUsername}${colors.reset}`);
   console.log('');
 
-  console.log(`${colors.bright}--- СТАТИСТИКА СДЕЛКАХ ---${colors.reset}`);
+  console.log(`${colors.bright}--- СТАТИСТИКА СДЕЛОК ---${colors.reset}`);
   console.log(`Всего сделок:    ${colors.bright}${stats.totalDeals}${colors.reset}`);
   console.log(`Активных сделок: ${colors.fgGreen}${stats.activeDeals}${colors.reset}`);
   console.log(`Открытых споров: ${colors.fgRed}${stats.disputeDeals}${colors.reset}`);
@@ -181,10 +181,14 @@ function showLogs() {
     process.stdout.write(data.toString());
   });
 
+  // setRawMode доступен только в интерактивном терминале: в CI/при запуске
+  // через pipe process.stdin.isTTY отсутствует и вызов бросил бы исключение.
+  const canRaw = !!(process.stdin.isTTY && process.stdin.setRawMode);
+
   const cleanExit = () => {
     tail.kill();
     process.stdin.removeListener('data', onKey);
-    process.stdin.setRawMode(false);
+    if (canRaw) process.stdin.setRawMode(false);
     mainMenu();
   };
 
@@ -194,7 +198,7 @@ function showLogs() {
     }
   };
 
-  process.stdin.setRawMode(true);
+  if (canRaw) process.stdin.setRawMode(true);
   process.stdin.resume();
   process.stdin.on('data', onKey);
 }
@@ -202,7 +206,7 @@ function showLogs() {
 function listDeals() {
   clearScreen();
   printHeader();
-  console.log(`${colors.bright}--- СПИСОК СДЕЛКАХ (ПОСЛЕДНИЕ 15) ---${colors.reset}\n`);
+  console.log(`${colors.bright}--- СПИСОК СДЕЛОК (ПОСЛЕДНИЕ 15) ---${colors.reset}\n`);
 
   if (fs.existsSync(DB_FILE)) {
     try {

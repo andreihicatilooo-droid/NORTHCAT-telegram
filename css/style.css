@@ -465,6 +465,23 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+/* Кнопки действий гаранта внутри карточки сделки (админ-панель) */
+.deal-item-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  position: relative;
+  z-index: 1;
+}
+
+.deal-item-actions .btn {
+  flex: 1 1 auto;
+  margin: 0;
+}
+
 /* ---------- Статусы ---------- */
 
 .status-chip {
@@ -584,7 +601,8 @@ body {
   border-radius: var(--radius);
   background: var(--surface);
   color: var(--text);
-  font-size: 14px;
+  /* 16px — иначе iOS Safari зумит страницу при фокусе на поле */
+  font-size: 16px;
   font-family: inherit;
   padding: 11px 13px;
   outline: none;
@@ -1624,6 +1642,173 @@ select.input {
   }
 }
 
+/* ---------- Адаптивность ---------- */
+
+/* Тач-устройства: убираем «залипающие» hover-эффекты, оставляем :active */
+@media (hover: none) {
+  .deal-item:hover {
+    border-color: var(--border);
+    box-shadow: none;
+  }
+  .deal-item:hover::before {
+    opacity: 0;
+  }
+  .btn--primary:hover {
+    box-shadow: 0 2px 12px rgba(62, 108, 224, 0.3);
+    transform: none;
+  }
+  .btn--green:hover {
+    box-shadow: 0 2px 12px rgba(46, 189, 111, 0.25);
+    transform: none;
+  }
+  .btn--outline:hover,
+  .segment-item:not(.segment-item--active):hover,
+  .pay-method-card:hover {
+    background: var(--surface);
+    border-color: var(--border);
+  }
+  .stat-card:hover,
+  .detail-card:hover,
+  .avatar:hover {
+    border-color: var(--border);
+    transform: none;
+    box-shadow: none;
+  }
+}
+
+/* Комфортные тач-цели */
+@media (pointer: coarse) {
+  .chip {
+    padding: 9px 15px;
+  }
+  .tab {
+    padding: 11px 0 9px;
+  }
+  .btn--small,
+  .btn--xs {
+    padding-top: 10px;
+    padding-bottom: 10px;
+  }
+}
+
+/* Узкие экраны (iPhone SE/mini и уже) */
+@media (max-width: 374px) {
+  .header {
+    padding: 10px 12px;
+  }
+  .screen {
+    padding: 12px 12px 20px;
+  }
+  .screen-title {
+    font-size: 18px;
+  }
+  .badge {
+    padding: 4px 7px;
+    letter-spacing: 0.05em;
+  }
+  .avatar {
+    width: 34px;
+    height: 34px;
+  }
+  .field--row {
+    flex-direction: column;
+    gap: 16px;
+  }
+  .field-col--narrow {
+    flex: 1;
+  }
+  .stats-grid {
+    gap: 6px;
+  }
+  .stat-value {
+    font-size: 17px;
+  }
+  .deal-item {
+    padding: 12px;
+  }
+  .auth-card {
+    padding: 24px 18px;
+  }
+}
+
+/* Низкий горизонтальный экран (телефон в альбомной ориентации) */
+@media (max-height: 480px) and (orientation: landscape) {
+  .header {
+    padding: 8px 16px;
+  }
+  .avatar {
+    width: 32px;
+    height: 32px;
+  }
+  .tab {
+    flex-direction: row;
+    gap: 7px;
+    padding: 8px 0;
+  }
+  .tab-icon {
+    width: 18px;
+    height: 18px;
+  }
+  .screen {
+    padding-top: 12px;
+  }
+  .screen-subtitle {
+    margin-bottom: 12px;
+  }
+}
+
+/* Планшет и десктоп: центрируем колонку контента */
+@media (min-width: 700px) {
+  body {
+    background: #05060a;
+  }
+  #app {
+    max-width: 560px;
+    margin: 0 auto;
+    border-left: 1px solid var(--border);
+    border-right: 1px solid var(--border);
+    background: var(--bg);
+    box-shadow: 0 0 60px rgba(0, 0, 0, 0.55);
+  }
+  .screen {
+    padding: 20px 24px 28px;
+  }
+  .header {
+    padding: 14px 24px;
+  }
+  .stats-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .toast {
+    bottom: calc(env(safe-area-inset-bottom) + 80px);
+  }
+}
+
+/* Широкий десктоп: чуть шире колонка, список сделок в 2 колонки */
+@media (min-width: 1100px) {
+  #app {
+    max-width: 720px;
+  }
+  .deal-list {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .deal-list > .deal-item {
+    margin: 0;
+  }
+}
+
+/* Уважение к reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
 /* ---------- Тост-уведомление ---------- */
 
 .toast {
@@ -1644,6 +1829,9 @@ select.input {
   z-index: 200;
   pointer-events: none;
   white-space: nowrap;
+  max-width: calc(100vw - 32px);
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .toast--visible {

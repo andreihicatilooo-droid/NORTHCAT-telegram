@@ -1066,25 +1066,39 @@
       }
     }
 
-    function getAuthQuery() {
-      var query = [];
+    // app.js хранит под этим ключом JSON {user, token} — достаём именно токен
+    function getStoredAuthToken() {
+      var raw = '';
       try {
-        var tg = window.Telegram && window.Telegram.WebApp;
-        if (tg && tg.initData) {
-          query.push('initDataB64=' + encodeURIComponent(toBase64UrlUtf8(tg.initData)));
-        }
-      } catch (_) {}
-      
-      try {
-        var token = localStorage.getItem('northcat_auth_v1');
-        if (token) {
-          query.push('auth=' + encodeURIComponent(toBase64UrlUtf8(token)));
-        }
-      } catch (_) {}
-      
-      return query.length ? '?' + query.join('&') : '';
+        raw = localStorage.getItem('northcat_auth_v1') || '';
+        if (!raw) return '';
+        var parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object') return parsed.token || '';
+      } catch (_) {
+        return raw;
+      }
+      return raw;
     }
 
+    function getAuthHeaders() {
+      const headers = { 'Content-Type': 'application/json' };
+      try {
+        const tg = window.Telegram && window.Telegram.WebApp;
+        if (tg && tg.initData) {
+          headers['X-Telegram-Init-Data'] = tg.initData;
+        }
+      } catch (_) {}
+      const token = getStoredAuthToken();
+      if (token) {
+        headers['X-Auth-Token'] = token;
+      }
+      return headers;
+    }
+
+    // Сохраняем все поля Login Widget, включая auth_date и hash: без них
+    // сервер не сможет проверить подпись (иначе /api/auth/telegram → 401).
+    // Ключи с undefined отбрасываются JSON.stringify, поэтому data_check_string
+    // на сервере совпадает с исходным набором полей виджета.
     function encodeTelegramUser(widgetUser) {
       var safe = widgetUser || {};
       return {
@@ -1092,7 +1106,9 @@
         first_name: safe.first_name,
         last_name: safe.last_name,
         username: safe.username,
-        photo_url: safe.photo_url
+        photo_url: safe.photo_url,
+        auth_date: safe.auth_date,
+        hash: safe.hash
       };
     }
 
@@ -1103,8 +1119,9 @@
     async function fetchEnv() {
       const ctrl = new AbortController();
       const timer = setTimeout(function () { ctrl.abort(); }, 10000);
-      const resp = await fetch(getApiBase() + '/api/admin/env' + getAuthQuery(), {
+      const resp = await fetch(getApiBase() + '/api/admin/env', {
         method: 'GET',
+        headers: getAuthHeaders(),
         signal: ctrl.signal
       }).finally(function () {
         clearTimeout(timer);
@@ -1116,9 +1133,9 @@
     async function saveEnv(changes) {
       const ctrl = new AbortController();
       const timer = setTimeout(function () { ctrl.abort(); }, 12000);
-      const resp = await fetch(getApiBase() + '/api/admin/env' + getAuthQuery(), {
+      const resp = await fetch(getApiBase() + '/api/admin/env', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAuthHeaders(),
         body: JSON.stringify(changes),
         signal: ctrl.signal
       }).finally(function () {
@@ -1134,9 +1151,9 @@
     async function testService(serviceId) {
       const ctrl = new AbortController();
       const timer = setTimeout(function () { ctrl.abort(); }, 12000);
-      const resp = await fetch(getApiBase() + '/api/admin/test' + getAuthQuery(), {
+      const resp = await fetch(getApiBase() + '/api/admin/test', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAuthHeaders(),
         body: JSON.stringify({ service: serviceId }),
         signal: ctrl.signal
       }).finally(function () {
@@ -1209,18 +1226,31 @@
       });
     }
 
-    function renderForm(data) {
-      serverEnv = data.env || {};
-      serverValues = {};
-      Object.keys(serverEnv).forEach(function(k) { serverValues[k] = serverEnv[k].value; });
+    // Backend отдаёт { env: { KEY: { value, masked, configured } } } —
+    // распаковываем в плоскую карту key -> { value:string, configured:bool }.
+    function normalizeEnv(data) {
+      var src = (data && data.env) ? data.env : (data || {});
+      var out = {};
+      Object.keys(src).forEach(function(k) {
+        var e = src[k];
+        if (e && typeof e === 'object') {
+          out[k] = { value: e.value != null ? String(e.value) : '', configured: !!e.configured };
+        } else {
+          out[k] = { value: e != null ? String(e) : '', configured: !!e };
+        }
+      });
+      return out;
+    }
 
+    function renderForm(data) {
+      serverValues = normalizeEnv(data);
       const form = document.getElementById('settings-form');
       form.innerHTML = '';
 
       // Create validation panel
       let missingFields = [];
-      Object.keys(serverEnv).forEach(function(k) {
-        if (!serverEnv[k].configured) {
+      Object.keys(serverValues).forEach(function(k) {
+        if (!serverValues[k].configured) {
           missingFields.push(k);
         }
       });
@@ -1264,12 +1294,13 @@
         html += '<div class="s-section-grid">';
 
         section.fields.forEach(function(field) {
-          let actualVal = serverValues[field.key] || '';
+          const entry = serverValues[field.key] || {};
+          const actualVal = entry.value || '';
           let val = actualVal;
           if (!val && field.default !== undefined) {
             val = String(field.default);
           }
-          const isSet = !!actualVal;
+          const isSet = entry.configured !== undefined ? entry.configured : !!actualVal;
           const isPassword = field.type === 'password';
           const inputType = isPassword ? 'password' : field.type;
           const cssExtra = isPassword ? ' s-input--password' : ' s-input--with-save';
@@ -1481,13 +1512,9 @@
         }
         
         var val = inp.value.trim();
-        var orig = serverValues[key] || '';
-        
-        // If there was no original value, and they didn't type anything, but value was preset to default:
-        if (!orig && val && val !== orig) {
-           changes[key] = val;
-        } else if (val && val !== orig) {
-           changes[key] = val;
+        var current = (serverValues[key] && serverValues[key].value) || '';
+        if (val && val !== current) {
+          changes[key] = val;
         }
       });
       return changes;
@@ -1628,18 +1655,14 @@
           fetch(getApiBase() + '/api/auth/telegram', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              id: payload.id,
-              first_name: payload.first_name,
-              last_name: payload.last_name,
-              username: payload.username,
-              photo_url: payload.photo_url
-            })
+            body: JSON.stringify(payload)
           })
           .then(function (r) { return r.json(); })
           .then(function (res) {
             if (res && res.token) {
-              localStorage.setItem('northcat_auth_v1', res.token);
+              // app.js хранит под этим ключом JSON {user, token} — сохраняем так же,
+              // чтобы сессия была общей между Mini App и страницей настроек.
+              localStorage.setItem('northcat_auth_v1', JSON.stringify({ user: res.user, token: res.token }));
               document.getElementById('auth-overlay').style.display = 'none';
               document.getElementById('skeleton').style.display = 'block';
               init();

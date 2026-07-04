@@ -23,6 +23,9 @@ loadEnvFiles([
 ]);
 
 function loadEnvFiles(files) {
+  // Тесты выставляют SKIP_DOTENV=1, чтобы локальный backend/.env с реальными
+  // ключами не протекал в изолированное тестовое окружение.
+  if (process.env.SKIP_DOTENV) return;
   for (const file of files) {
     try {
       applyEnvFile(fs.readFileSync(file, "utf8"));
@@ -122,26 +125,45 @@ function normalizeBotProfile(profile) {
   };
 }
 
-const XROCKET_API_KEY = process.env.XROCKET_API_KEY || "";
-const XROCKET_API_URL = (process.env.XROCKET_API_URL || "https://pay.xrocket.tg").replace(/\/+$/, "");
-const PUBLIC_URL = (process.env.PUBLIC_URL || "").replace(/\/+$/, "");
-const FEE_PERCENT = parseFloat(process.env.FEE_PERCENT || "5");
+// Конфиг перечитывается из process.env, чтобы правки через админ-панель
+// (/api/admin/env) вступали в силу без перезапуска процесса.
+let XROCKET_API_KEY, XROCKET_API_URL, PUBLIC_URL, FEE_PERCENT;
+let PGON_API_URL, PGON_API_KEY, NICEPAY_MERCHANT_ID, NICEPAY_SECRET, NICEPAY_API_URL;
+let RUKASSA_SHOP_ID, RUKASSA_TOKEN, RUKASSA_API_URL, WEBHOOK_SECRET, BITPAPA_API_TOKEN;
+let ADMIN_IDS;
+
+function applyConfigFromEnv() {
+  XROCKET_API_KEY = process.env.XROCKET_API_KEY || "";
+  XROCKET_API_URL = (process.env.XROCKET_API_URL || "https://pay.xrocket.tg").replace(/\/+$/, "");
+  PUBLIC_URL = (process.env.PUBLIC_URL || "").replace(/\/+$/, "");
+  const fee = parseFloat(process.env.FEE_PERCENT || "5");
+  FEE_PERCENT = Number.isFinite(fee) && fee >= 0 && fee < 100 ? fee : 5;
+
+  // Платёжные шлюзы
+  PGON_API_URL = (process.env.PGON_API_URL || "").replace(/\/+$/, "");
+  PGON_API_KEY = process.env.PGON_API_KEY || "";
+  NICEPAY_MERCHANT_ID = process.env.NICEPAY_MERCHANT_ID || "";
+  NICEPAY_SECRET = process.env.NICEPAY_SECRET || "";
+  NICEPAY_API_URL = (process.env.NICEPAY_API_URL || "https://nicepay.io").replace(/\/+$/, "");
+  RUKASSA_SHOP_ID = process.env.RUKASSA_SHOP_ID || "";
+  RUKASSA_TOKEN = process.env.RUKASSA_TOKEN || "";
+  RUKASSA_API_URL = (process.env.RUKASSA_API_URL || "https://lk.rukassa.pro").replace(/\/+$/, "");
+
+  // Секрет, который добавляется query-параметром к URL вебхуков шлюзов
+  // (укажите его при настройке webhook в кабинете шлюза: /webhook/rukassa?secret=...)
+  WEBHOOK_SECRET = normalizedSecret(process.env.WEBHOOK_SECRET);
+
+  // Токен API Bitpapa для автопроверки входящих переводов
+  BITPAPA_API_TOKEN = process.env.BITPAPA_API_TOKEN || "";
+
+  ADMIN_IDS = (process.env.ADMIN_IDS || "")
+    .split(",")
+    .map((s) => parseInt(s.trim(), 10))
+    .filter(Boolean);
+}
+applyConfigFromEnv();
+
 const PORT = parseInt(process.env.PORT || "3000", 10);
-
-// Платёжные шлюзы
-const PGON_API_URL = (process.env.PGON_API_URL || "").replace(/\/+$/, "");
-const PGON_API_KEY = process.env.PGON_API_KEY || "";
-const NICEPAY_MERCHANT_ID = process.env.NICEPAY_MERCHANT_ID || "";
-const NICEPAY_SECRET = process.env.NICEPAY_SECRET || "";
-const RUKASSA_SHOP_ID = process.env.RUKASSA_SHOP_ID || "";
-const RUKASSA_TOKEN = process.env.RUKASSA_TOKEN || "";
-
-// Секрет, который добавляется query-параметром к URL вебхуков шлюзов
-// (укажите его при настройке webhook в кабинете шлюза: /webhook/rukassa?secret=...)
-const WEBHOOK_SECRET = normalizedSecret(process.env.WEBHOOK_SECRET);
-
-// Токен API Bitpapa для автопроверки входящих переводов
-const BITPAPA_API_TOKEN = process.env.BITPAPA_API_TOKEN || "";
 
 const rawAdminIds = process.env.ADMIN_IDS || "";
 let ADMIN_USERS = rawAdminIds.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
@@ -157,8 +179,25 @@ function isAdminCheck(from) {
   });
 }
 const ADMIN_GROUP_ID = parseInt(process.env.ADMIN_GROUP_ID || "", 10);
+const IS_PRODUCTION = process.env.NODE_ENV === "production";
 
-const RUNTIME_SETTINGS_FILE = path.join(__dirname, "runtime_settings.json");
+// Максимальный возраст initData Mini App (защита от повторного использования)
+const INITDATA_MAX_AGE_SECONDS = parseInt(process.env.INITDATA_MAX_AGE || "86400", 10);
+
+// Локальный админ-доступ без авторизации (для разработки). В production
+// выключен по умолчанию; включается только явным LOCAL_ADMIN=1.
+const LOCAL_ADMIN_ENABLED = process.env.LOCAL_ADMIN === "1" ||
+  (process.env.LOCAL_ADMIN !== "0" && !IS_PRODUCTION);
+
+// Каталог данных (deals.json и т.п.) — вынесите на постоянный том в проде
+const DATA_DIR = process.env.DATA_DIR || __dirname;
+try {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+} catch (e) {
+  console.error("[db] Не удалось создать каталог данных DATA_DIR:", e.message);
+}
+
+const RUNTIME_SETTINGS_FILE = path.join(DATA_DIR, "runtime_settings.json");
 const DEFAULT_BOT_TOKEN = normalizedSecret(process.env.BOT_TOKEN);
 const DEFAULT_BOT_PROFILE = normalizeBotProfile({
   name: process.env.BOT_NAME,
@@ -189,6 +228,17 @@ try {
   // ignore missing runtime settings
 }
 
+// Атомарная запись: tmp-файл + rename, чтобы не потерять данные при падении
+function writeFileAtomic(file, content) {
+  const tmp = file + "." + process.pid + ".tmp";
+  fs.writeFileSync(tmp, content);
+  fs.renameSync(tmp, file);
+}
+
+function writeJsonAtomic(file, data) {
+  writeFileAtomic(file, JSON.stringify(data, null, 2));
+}
+
 function persistRuntimeSettings() {
   try {
     if (!runtimeSettings.botToken) {
@@ -200,7 +250,7 @@ function persistRuntimeSettings() {
       botProfile: normalizeBotProfile(runtimeSettings.botProfile),
       updatedAt: runtimeSettings.updatedAt || Date.now()
     };
-    fs.writeFileSync(RUNTIME_SETTINGS_FILE, JSON.stringify(payload, null, 2));
+    writeJsonAtomic(RUNTIME_SETTINGS_FILE, payload);
   } catch (e) {
     console.error("[admin] Не удалось сохранить runtime_settings:", e.message);
   }
@@ -224,8 +274,8 @@ function getBotProfile() {
 
 
 
-const DB_FILE = path.join(__dirname, "deals.json");
-const ADMIN_GROUP_FILE = path.join(__dirname, "admin_group.json");
+const DB_FILE = path.join(DATA_DIR, "deals.json");
+const ADMIN_GROUP_FILE = path.join(DATA_DIR, "admin_group.json");
 
 /* ---------- Хранилище ---------- */
 
@@ -237,7 +287,11 @@ try {
 }
 
 function persist() {
-  fs.writeFileSync(DB_FILE, JSON.stringify(deals, null, 2));
+  try {
+    writeJsonAtomic(DB_FILE, deals);
+  } catch (e) {
+    console.error("[db] Не удалось сохранить deals.json:", e.message);
+  }
 }
 
 function findDeal(id) {
@@ -288,7 +342,7 @@ function persistAdminGroup() {
       if (fs.existsSync(ADMIN_GROUP_FILE)) fs.unlinkSync(ADMIN_GROUP_FILE);
       return;
     }
-    fs.writeFileSync(ADMIN_GROUP_FILE, JSON.stringify(adminGroup, null, 2));
+    writeJsonAtomic(ADMIN_GROUP_FILE, adminGroup);
   } catch (e) {
     console.error("[bot] Не удалось сохранить admin_group:", e.message);
   }
@@ -324,7 +378,7 @@ function adminGroupLabel() {
 
 /* ---------- Хранилище chat_id пользователей ---------- */
 
-const USER_CHATS_FILE = path.join(__dirname, "user_chats.json");
+const USER_CHATS_FILE = path.join(DATA_DIR, "user_chats.json");
 let userChats = {};
 try {
   userChats = JSON.parse(fs.readFileSync(USER_CHATS_FILE, "utf8"));
@@ -333,7 +387,7 @@ try {
 }
 
 function persistChats() {
-  try { fs.writeFileSync(USER_CHATS_FILE, JSON.stringify(userChats)); } catch (e) {
+  try { writeJsonAtomic(USER_CHATS_FILE, userChats); } catch (e) {
     console.error("[bot] Не удалось сохранить user_chats:", e.message);
   }
 }
@@ -370,10 +424,19 @@ function validateInitData(initData) {
 
   const secretKey = crypto.createHmac("sha256", "WebAppData").update(botToken).digest();
   const expected = crypto.createHmac("sha256", secretKey).update(dataCheckString).digest("hex");
-  if (expected !== hash) return null;
+  if (expected.length !== hash.length ||
+      !crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(hash))) return null;
+
+  // Защита от повторного использования украденного initData
+  const authDate = Number(params.get("auth_date") || 0);
+  if (!Number.isFinite(authDate) ||
+      Math.floor(Date.now() / 1000) - authDate > INITDATA_MAX_AGE_SECONDS) {
+    return null;
+  }
 
   try {
-    return JSON.parse(params.get("user"));
+    const user = JSON.parse(params.get("user"));
+    return user && Number.isFinite(Number(user.id)) ? user : null;
   } catch (e) {
     return null;
   }
@@ -391,7 +454,9 @@ function validateWidgetAuth(data) {
     .join("\n");
   const secretKey = crypto.createHash("sha256").update(botToken).digest();
   const expected = crypto.createHmac("sha256", secretKey).update(dataCheckString).digest("hex");
-  if (expected !== hash) return null;
+  const received = String(hash);
+  if (expected.length !== received.length ||
+      !crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(received))) return null;
   // Данные не старше суток
   if (Math.floor(Date.now() / 1000) - Number(fields.auth_date || 0) > 86400) return null;
   return fields;
@@ -422,7 +487,7 @@ function validateToken(token) {
       !crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(sig))) return null;
   try {
     const user = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
-    if (!user.id || user.exp < Date.now()) return null;
+    if (!user.id || !Number.isFinite(Number(user.exp)) || user.exp < Date.now()) return null;
     return user;
   } catch (e) {
     return null;
@@ -430,19 +495,13 @@ function validateToken(token) {
 }
 
 function auth(req, res, next) {
-  const encodedInitData = req.header("X-Telegram-Init-Data-B64") || req.query.initDataB64;
-  let initData = req.header("X-Telegram-Init-Data") || req.query.initData || "";
+  // Данные авторизации принимаем только через заголовки: query-параметры
+  // утекают в логи, Referer и историю браузера (особенно опасно при CORS "*").
+  const encodedInitData = req.header("X-Telegram-Init-Data-B64");
+  let initData = req.header("X-Telegram-Init-Data") || "";
   if (!initData && encodedInitData) {
     try {
       initData = Buffer.from(String(encodedInitData), "base64url").toString("utf8");
-    } catch (e) {
-      initData = "";
-    }
-  }
-  if (!initData && req.query.auth) {
-    const authData = String(req.query.auth || "");
-    try {
-      initData = Buffer.from(authData, "base64url").toString("utf8");
     } catch (e) {
       initData = "";
     }
@@ -459,7 +518,19 @@ function auth(req, res, next) {
 
 /* ---------- Счета: xRocket ---------- */
 
+// xRocket работает только с криптовалютами (RUB и подобное — через фиатные шлюзы)
+const XROCKET_CURRENCY = { USDT: "USDT", TON: "TONCOIN", TONCOIN: "TONCOIN", BTC: "BTC" };
+
+function xrocketCurrency(currency) {
+  return XROCKET_CURRENCY[String(currency || "").toUpperCase()] || null;
+}
+
 async function createXRocketInvoice(deal) {
+  if (!XROCKET_API_KEY) throw new Error("xRocket не настроен (XROCKET_API_KEY)");
+  const currency = xrocketCurrency(deal.currency);
+  if (!currency) {
+    throw new Error(`xRocket не поддерживает валюту ${deal.currency} — выберите крипто-валюту или фиатный шлюз`);
+  }
   const res = await fetch(XROCKET_API_URL + "/tg-invoices", {
     method: "POST",
     headers: {
@@ -468,7 +539,7 @@ async function createXRocketInvoice(deal) {
     },
     body: JSON.stringify({
       amount: deal.total,
-      currency: deal.currency === "USDT" ? "USDT" : deal.currency === "TON" ? "TONCOIN" : deal.currency,
+      currency,
       description: `Сделка ${deal.id}: ${deal.title}`.slice(0, 1000),
       payload: deal.id,
       numPayments: 1,
@@ -497,8 +568,9 @@ function verifyXRocketSignature(rawBody, signature) {
 /* ---------- Счета: платёжные шлюзы ---------- */
 
 /**
- * RuKassa — https://lk.rukassa.pro (раздел API).
- * Создание платежа: POST /api/v1/create, ответ содержит url на страницу оплаты.
+ * RuKassa — база настраивается через RUKASSA_API_URL
+ * (по умолчанию https://lk.rukassa.pro; для lk.rukassa.io укажите его в .env).
+ * Создание платежа: POST {base}/api/v1/create, ответ содержит url страницы оплаты.
  * Сверьте поля с актуальной документацией вашего кабинета.
  */
 async function createRukassaInvoice(deal) {
@@ -511,7 +583,7 @@ async function createRukassaInvoice(deal) {
     currency: deal.currency,
     data: JSON.stringify({ deal: deal.id })
   });
-  const res = await fetch("https://lk.rukassa.pro/api/v1/create", {
+  const res = await fetch(RUKASSA_API_URL + "/api/v1/create", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: form
@@ -528,7 +600,7 @@ async function createRukassaInvoice(deal) {
  */
 async function createNicepayInvoice(deal) {
   if (!NICEPAY_MERCHANT_ID || !NICEPAY_SECRET) throw new Error("NicePay не настроен");
-  const res = await fetch("https://nicepay.io/public/api/payment", {
+  const res = await fetch(NICEPAY_API_URL + "/public/api/payment", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -631,6 +703,10 @@ async function verifyBitpapaTransfer(deal) {
 
 // Автовыплата продавцу по завершенной сделке через xRocket Pay API
 async function payoutSeller(deal) {
+  if (deal.payoutId) {
+    console.log(`[payout] Сделка ${deal.id}: выплата уже проведена (${deal.payoutId}), пропуск`);
+    return true;
+  }
   const sellerId = deal.role === "seller" ? deal.ownerId : deal.counterpartyId;
   if (!sellerId) {
     console.warn(`[payout] Сделка ${deal.id}: не удалось выплатить продавцу, т.к. его Telegram ID не известен`);
@@ -638,13 +714,23 @@ async function payoutSeller(deal) {
     return false;
   }
 
-  if (deal.method !== "xrocket") {
-    console.log(`[payout] Сделка ${deal.id}: метод ${deal.method} требует ручной выплаты продавцу ID ${sellerId}`);
+  // Фиатные шлюзы (RuKassa/NicePay/PGon) и Bitpapa — выплата продавцу вручную.
+  // Уведомляем гаранта, чтобы завершённая сделка не осталась без выплаты.
+  if (deal.method !== "xrocket" || !xrocketCurrency(deal.currency)) {
+    console.log(`[payout] Сделка ${deal.id}: метод ${deal.method}/${deal.currency} требует ручной выплаты продавцу ID ${sellerId}`);
+    notifyAdmins(
+      `💸 Сделка <b>${deal.id}</b> завершена. Метод «${deal.method}» (${deal.currency}) не поддерживает автовыплату.\n` +
+      `Выплатите продавцу (ID ${sellerId}) <b>${formatAmount(deal.amount, deal.currency)}</b> вручную.`
+    ).catch(() => {});
     return false;
   }
 
   if (!XROCKET_API_KEY) {
     console.warn(`[payout] Сделка ${deal.id}: xRocket API ключ не настроен для автовыплаты`);
+    notifyAdmins(
+      `⚠️ Сделка <b>${deal.id}</b> завершена, но XROCKET_API_KEY не настроен — ` +
+      `выплатите продавцу (ID ${sellerId}) <b>${formatAmount(deal.amount, deal.currency)}</b> вручную.`
+    ).catch(() => {});
     return false;
   }
 
@@ -691,6 +777,10 @@ async function notifyParties(deal, text) {
   const ids = new Set();
   const ownerChat = userChats[String(deal.ownerId)];
   if (ownerChat) ids.add(ownerChat);
+  if (deal.counterpartyId) {
+    const cpChatById = userChats[String(deal.counterpartyId)];
+    if (cpChatById) ids.add(cpChatById);
+  }
   const cp = String(deal.counterparty || "").trim().toLowerCase();
   if (cp.startsWith("@")) {
     const cpChat = userChats[cp];
@@ -711,27 +801,42 @@ function groupLinkButton(text) {
   return { inline_keyboard: [[{ text, url: PUBLIC_URL + "/?admin=1" }]] };
 }
 
-async function notifyAdminGroup(text) {
+// Инлайн-кнопки для управления сделкой прямо из Telegram
+function payConfirmKeyboard(deal) {
+  return { inline_keyboard: [[
+    { text: "✅ Подтвердить оплату", callback_data: "apay:" + deal.id }
+  ]] };
+}
+
+function disputeKeyboard(deal) {
+  return { inline_keyboard: [[
+    { text: "✅ Продавцу", callback_data: `ars:${deal.id}:seller` },
+    { text: "🔄 Покупателю", callback_data: `ars:${deal.id}:buyer` }
+  ]] };
+}
+
+async function notifyAdminGroup(text, keyboard) {
   if (!adminGroup.chatId) return false;
   const res = await tgCall("sendMessage", {
     chat_id: adminGroup.chatId,
     text,
     parse_mode: "HTML",
-    reply_markup: groupLinkButton("Открыть сервис")
+    reply_markup: keyboard || groupLinkButton("Открыть сервис")
   }).catch(() => ({ ok: false }));
   return !!(res && res.ok);
 }
 
-// Оповестить всех гарантов/арбитров
-async function notifyAdmins(text) {
-  if (await notifyAdminGroup(text)) return;
-  for (const adminId of ADMIN_USERS) {
-    if (!adminId || isNaN(Number(adminId))) continue;
+// Оповестить всех гарантов/арбитров (с опциональными кнопками действий).
+// Уведомление уходит в привязанную админ-группу, иначе — каждому админу лично.
+async function notifyAdmins(text, keyboard) {
+  if (await notifyAdminGroup(text, keyboard)) return;
+  const markup = keyboard || adminAppButton("Открыть админ-панель");
+  for (const adminId of ADMIN_IDS) {
     await tgCall("sendMessage", {
       chat_id: adminId,
       text,
       parse_mode: "HTML",
-      reply_markup: appButton("Открыть админ-панель")
+      reply_markup: markup
     }).catch(() => {});
   }
 }
@@ -742,19 +847,55 @@ let BOT_INFO = null;
 let botLoopStarted = false;
 const app = express();
 
+// За reverse-proxy укажите TRUST_PROXY (например, 1 или loopback),
+// чтобы req.ip отражал реального клиента, а не адрес прокси.
+if (process.env.TRUST_PROXY) {
+  const tp = process.env.TRUST_PROXY;
+  app.set("trust proxy", /^\d+$/.test(tp) ? parseInt(tp, 10) : tp);
+}
+
 // Сырое тело нужно для проверки подписи webhook xRocket
-app.use("/webhook/xrocket", express.raw({ type: "*/*" }));
-app.use(express.json());
-app.use(express.urlencoded({ extended: false }));
+app.use("/webhook/xrocket", express.raw({ type: "*/*", limit: "256kb" }));
+app.use(express.json({ limit: "256kb" }));
+app.use(express.urlencoded({ extended: false, limit: "256kb" }));
 
 // CORS для Mini App (страница может жить на другом домене)
 app.use((req, res, next) => {
   res.set("Access-Control-Allow-Origin", "*");
-  res.set("Access-Control-Allow-Headers", "Content-Type, X-Telegram-Init-Data, X-Auth-Token");
+  res.set("Access-Control-Allow-Headers", "Content-Type, X-Telegram-Init-Data, X-Telegram-Init-Data-B64, X-Auth-Token");
   res.set("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   if (req.method === "OPTIONS") return res.sendStatus(204);
   next();
 });
+
+// Простой rate-limit по IP (RATE_LIMIT_PER_MIN=0 — отключить)
+const RATE_LIMIT_PER_MIN = parseInt(process.env.RATE_LIMIT_PER_MIN || "300", 10);
+const rateBuckets = new Map();
+setInterval(() => {
+  const cutoff = Date.now() - 60000;
+  for (const [key, bucket] of rateBuckets) {
+    if (bucket.start < cutoff) rateBuckets.delete(key);
+  }
+}, 30000).unref();
+
+function rateLimit(req, res, next) {
+  if (!(RATE_LIMIT_PER_MIN > 0)) return next();
+  const key = String(req.ip || req.socket.remoteAddress || "?");
+  const now = Date.now();
+  let bucket = rateBuckets.get(key);
+  if (!bucket || now - bucket.start >= 60000) {
+    bucket = { start: now, count: 0 };
+    rateBuckets.set(key, bucket);
+  }
+  bucket.count += 1;
+  if (bucket.count > RATE_LIMIT_PER_MIN) {
+    return res.status(429).json({ error: "Слишком много запросов, повторите позже" });
+  }
+  next();
+}
+
+app.use("/api", rateLimit);
+app.use("/webhook", rateLimit);
 
 app.get("/api/health", (req, res) => {
   res.json({
@@ -770,13 +911,14 @@ app.get("/api/me", auth, (req, res) => {
 });
 
 function isLocalRequest(req) {
-  const ip = String(req.ip || req.connection.remoteAddress || "");
-  const host = String(req.headers.host || "");
-  if (ip === "::1" || ip === "127.0.0.1" || ip === "::ffff:127.0.0.1") return true;
-  if (host.includes("localhost") || host.includes("127.0.0.1")) return true;
-  if (host.endsWith(".githubpreview.dev") || host.endsWith(".app.github.dev") || host.endsWith(".gitpod.io")) return true;
-  if (process.env.CODESPACES === "true") return true;
-  return false;
+  if (!LOCAL_ADMIN_ENABLED) return false;
+  // Запрос, прошедший через reverse-proxy, локальным не считается:
+  // иначе за nginx на этой же машине каждый внешний запрос выглядел бы как 127.0.0.1.
+  if (req.headers["x-forwarded-for"] || req.headers["x-real-ip"] || req.headers["forwarded"]) {
+    return false;
+  }
+  const ip = String(req.socket.remoteAddress || "");
+  return ip === "::1" || ip === "127.0.0.1" || ip === "::ffff:127.0.0.1";
 }
 
 function adminRuntimeAccess(req, res, next) {
@@ -820,6 +962,16 @@ function isParty(deal, user) {
   return false;
 }
 
+// Роль пользователя в сделке: "seller" | "buyer" | null (не участник)
+function partyRole(deal, user) {
+  if (deal.ownerId === user.id) return deal.role;
+  const uname = user.username ? "@" + String(user.username).toLowerCase() : null;
+  const isCounterparty = deal.counterpartyId === user.id ||
+    (uname && String(deal.counterparty || "").toLowerCase() === uname);
+  if (isCounterparty) return deal.role === "seller" ? "buyer" : "seller";
+  return null;
+}
+
 // Сделки текущего пользователя
 app.get("/api/deals", auth, (req, res) => {
   res.json(deals.filter((d) => isParty(d, req.tgUser)));
@@ -830,14 +982,14 @@ const KNOWN_METHODS = ["xrocket", "bitpapa", "pgon", "nicepay", "rukassa"];
 // Создание сделки (сумму и комиссию пересчитываем на сервере — клиенту не доверяем)
 app.post("/api/deals", auth, (req, res) => {
   const b = req.body || {};
-  const amount = parseFloat(b.amount);
-  if (!isFinite(amount) || amount <= 0) {
+  const amount = dealAmount(b.amount);
+  if (!Number.isFinite(amount) || amount <= 0 || amount > 1e9) {
     return res.status(400).json({ error: "Некорректная сумма" });
   }
   if (!b.title || !b.terms || !b.counterparty) {
     return res.status(400).json({ error: "Заполните все поля" });
   }
-  const fee = (amount * FEE_PERCENT) / 100;
+  const fee = dealAmount((amount * FEE_PERCENT) / 100);
   const parsedCounterpartyId = parseInt(b.counterpartyId, 10);
   const counterpartyId = Number.isFinite(parsedCounterpartyId) && parsedCounterpartyId > 0
     ? parsedCounterpartyId
@@ -857,7 +1009,7 @@ app.post("/api/deals", auth, (req, res) => {
     method: KNOWN_METHODS.includes(b.method) ? b.method : "xrocket",
     feePercent: FEE_PERCENT,
     fee,
-    total: amount + fee,
+    total: dealAmount(amount + fee),
     status: "new",
     createdAt: Date.now(),
     history: [{ status: "new", ts: Date.now() }]
@@ -886,6 +1038,13 @@ const TRANSITIONS = {
   fulfilled: ["completed", "dispute"]
 };
 
+// Кто вправе выполнить переход: исполнение подтверждает продавец,
+// приёмку — только покупатель (иначе продавец сам запускал бы выплату себе).
+const TRANSITION_ROLES = {
+  fulfilled: "seller",
+  completed: "buyer"
+};
+
 app.post("/api/deals/:id/status", auth, (req, res) => {
   const deal = findDeal(req.params.id);
   if (!deal || !isParty(deal, req.tgUser)) {
@@ -894,6 +1053,14 @@ app.post("/api/deals/:id/status", auth, (req, res) => {
   const next = req.body && req.body.status;
   if (!(TRANSITIONS[deal.status] || []).includes(next)) {
     return res.status(400).json({ error: `Переход ${deal.status} → ${next} запрещён` });
+  }
+  const requiredRole = TRANSITION_ROLES[next];
+  if (requiredRole && partyRole(deal, req.tgUser) !== requiredRole) {
+    return res.status(403).json({
+      error: requiredRole === "seller"
+        ? "Исполнение условий подтверждает продавец"
+        : "Приёмку подтверждает покупатель"
+    });
   }
   deal.status = next;
   deal.history.push({ status: next, ts: Date.now() });
@@ -907,7 +1074,13 @@ app.post("/api/deals/:id/status", auth, (req, res) => {
   };
   if (notifyMap[next]) {
     notifyParties(deal, notifyMap[next]).catch(() => {});
-    if (next === "dispute") notifyAdmins(`⚠️ Новый спор: <b>${deal.id}</b> «${deal.title}»\nСумма: ${deal.total} ${deal.currency}`).catch(() => {});
+    if (next === "dispute") {
+      notifyAdmins(
+        `⚠️ Новый спор: <b>${deal.id}</b> «${deal.title}»\nСумма: ${deal.total} ${deal.currency}\n` +
+        `Решите спор кнопкой ниже или в админ-панели.`,
+        disputeKeyboard(deal)
+      ).catch(() => {});
+    }
   }
   if (next === "completed") {
     // Инициируем автовыплату продавцу через xRocket, если применимо
@@ -923,6 +1096,9 @@ app.post("/api/deals/:id/invoice", auth, async (req, res) => {
   const deal = findDeal(req.params.id);
   if (!deal || !isParty(deal, req.tgUser)) {
     return res.status(404).json({ error: "Сделка не найдена" });
+  }
+  if (partyRole(deal, req.tgUser) !== "buyer") {
+    return res.status(403).json({ error: "Счёт оплачивает покупатель" });
   }
   const provider = INVOICE_PROVIDERS[deal.method];
   if (deal.status !== "new" || !provider) {
@@ -945,6 +1121,12 @@ app.post("/api/deals/:id/bitpapa-claim", auth, async (req, res) => {
   if (!deal || !isParty(deal, req.tgUser)) {
     return res.status(404).json({ error: "Сделка не найдена" });
   }
+  if (partyRole(deal, req.tgUser) !== "buyer") {
+    return res.status(403).json({ error: "Об оплате сообщает покупатель" });
+  }
+  if (deal.status !== "new") {
+    return res.status(400).json({ error: "Сделка уже оплачена или закрыта" });
+  }
   deal.bitpapaClaimedAt = Date.now();
   if (await verifyBitpapaTransfer(deal)) {
     markPaid(deal, "bitpapa-api");
@@ -952,7 +1134,8 @@ app.post("/api/deals/:id/bitpapa-claim", auth, async (req, res) => {
   } else {
     notifyAdmins(
       `💳 Покупатель по сделке <b>${deal.id}</b> «${deal.title}» сообщил об оплате через Bitpapa.\n` +
-      `Сумма: ${deal.total} ${deal.currency} — проверьте поступление.`
+      `Сумма: ${deal.total} ${deal.currency} — проверьте поступление и подтвердите кнопкой ниже.`,
+      payConfirmKeyboard(deal)
     ).catch(() => {});
   }
   persist();
@@ -1165,8 +1348,8 @@ const ENV_KEYS = [
   "ADMIN_IDS", "ADMIN_GROUP_ID",
   "XROCKET_API_KEY", "XROCKET_API_URL",
   "PGON_API_URL", "PGON_API_KEY",
-  "NICEPAY_MERCHANT_ID", "NICEPAY_SECRET",
-  "RUKASSA_SHOP_ID", "RUKASSA_TOKEN",
+  "NICEPAY_MERCHANT_ID", "NICEPAY_SECRET", "NICEPAY_API_URL",
+  "RUKASSA_SHOP_ID", "RUKASSA_TOKEN", "RUKASSA_API_URL",
   "BITPAPA_API_TOKEN",
   "WEBHOOK_SECRET", "PUBLIC_URL",
   "FEE_PERCENT", "PORT"
@@ -1356,10 +1539,12 @@ app.post("/api/admin/env", adminRuntimeAccess, async (req, res) => {
     return res.status(500).json({ error: "Не удалось сохранить .env файл" });
   }
 
-  // Обновляем process.env
+  // Обновляем process.env и перечитываем зависящий от него конфиг,
+  // чтобы новые ключи шлюзов/комиссия/ADMIN_IDS применились без рестарта
   for (const [key, val] of Object.entries(updates)) {
     process.env[key] = val;
   }
+  applyConfigFromEnv();
 
   // Перезапуск бота при смене BOT_TOKEN
   if ("BOT_TOKEN" in updates || hasProfileUpdates) {
@@ -1380,6 +1565,38 @@ app.post("/api/admin/env", adminRuntimeAccess, async (req, res) => {
   res.json({ env: getEnvSnapshot() });
 });
 
+// Общая логика решения спора — используется и HTTP-роутом, и Telegram-кнопками.
+// Возвращает true при успешном решении.
+function resolveDispute(deal, resolution, actorId) {
+  if (!deal || deal.status !== "dispute") return false;
+  if (resolution !== "seller" && resolution !== "buyer") return false;
+  deal.status = resolution === "seller" ? "completed" : "cancelled";
+  deal.resolvedBy = Number.isFinite(Number(actorId)) ? Number(actorId) : null;
+  deal.history.push({ status: deal.status, ts: Date.now() });
+  persist();
+  if (resolution === "seller") {
+    payoutSeller(deal).catch((err) => {
+      console.error(`[payout] Ошибка при автовыплате по сделке ${deal.id}:`, err);
+    });
+  }
+  const resolveText = resolution === "seller"
+    ? `✅ <b>Спор по сделке ${deal.id}</b> решён в пользу продавца. Средства выплачены.`
+    : `🔄 <b>Спор по сделке ${deal.id}</b> решён в пользу покупателя. Средства возвращены.`;
+  notifyParties(deal, resolveText).catch(() => {});
+  console.log(`[arbitr] Сделка ${deal.id}: спор решён в пользу ${resolution === "seller" ? "продавца" : "покупателя"} (актор ${actorId})`);
+  return true;
+}
+
+// Общая логика ручного подтверждения оплаты гарантом.
+// Возвращает true при успешном переходе new → paid.
+function confirmDealPaidByAdmin(deal, actorId) {
+  if (!deal || deal.status !== "new") return false;
+  markPaid(deal, "admin:" + actorId);
+  persist();
+  notifyParties(deal, `✅ <b>Сделка ${deal.id}</b>: оплата подтверждена гарантом. Средства заблокированы.\n<i>Продавец, исполните условия сделки.</i>`).catch(() => {});
+  return true;
+}
+
 // Админ: решение спора — "seller" (выплата продавцу) или "buyer" (возврат покупателю)
 app.post("/api/admin/deals/:id/resolve", auth, adminOnly, (req, res) => {
   const deal = findDeal(req.params.id);
@@ -1390,15 +1607,7 @@ app.post("/api/admin/deals/:id/resolve", auth, adminOnly, (req, res) => {
   if (resolution !== "seller" && resolution !== "buyer") {
     return res.status(400).json({ error: "resolution: seller | buyer" });
   }
-  deal.status = resolution === "seller" ? "completed" : "cancelled";
-  deal.resolvedBy = req.tgUser.id;
-  deal.history.push({ status: deal.status, ts: Date.now() });
-  persist();
-  const resolveText = resolution === "seller"
-    ? `✅ <b>Спор по сделке ${deal.id}</b> решён в пользу продавца. Средства выплачены.`
-    : `🔄 <b>Спор по сделке ${deal.id}</b> решён в пользу покупателя. Средства возвращены.`;
-  notifyParties(deal, resolveText).catch(() => {});
-  console.log(`[arbitr] Сделка ${deal.id}: спор решён в пользу ${resolution === "seller" ? "продавца" : "покупателя"}`);
+  resolveDispute(deal, resolution, req.tgUser.id);
   res.json(deal);
 });
 
@@ -1408,9 +1617,7 @@ app.post("/api/deals/:id/mark-paid", auth, adminOnly, (req, res) => {
   if (!deal || deal.status !== "new") {
     return res.status(400).json({ error: "Сделка не найдена или уже оплачена" });
   }
-  markPaid(deal, "admin:" + req.tgUser.id);
-  persist();
-  notifyParties(deal, `✅ <b>Сделка ${deal.id}</b>: оплата подтверждена гарантом. Средства заблокированы.\n<i>Продавец, исполните условия сделки.</i>`).catch(() => {});
+  confirmDealPaidByAdmin(deal, req.tgUser.id);
   res.json(deal);
 });
 
@@ -1435,6 +1642,10 @@ app.post("/webhook/xrocket", (req, res) => {
     event = JSON.parse(raw.toString("utf8"));
   } catch (e) {
     return res.status(400).json({ error: "Некорректное тело" });
+  }
+  // Реагируем только на событие оплаты счёта
+  if (event && event.type && event.type !== "invoicePay") {
+    return res.json({ ok: true });
   }
   const data = event && event.data;
   const dealId = data && (data.payload || (data.invoice && data.invoice.payload));
@@ -1463,38 +1674,49 @@ function gatewayWebhook(provider) {
     const deal = dealId && findDeal(String(dealId));
     if (!deal) return res.status(404).json({ error: "Сделка не найдена" });
 
-    // Сверка подписи NicePay
+    // Сверка подписи NicePay (при настроенном секрете подпись обязательна)
     if (provider === "nicepay" && NICEPAY_SECRET) {
       const sign = b.signature || b.sign || b.hash;
-      if (sign) {
-        const amountStr = String(b.amount ?? b.sum ?? b.value);
-        const expectedSignMd5 = crypto.createHash("md5")
-          .update(`${NICEPAY_MERCHANT_ID}${NICEPAY_SECRET}${amountStr}${deal.id}`)
-          .digest("hex");
-        const expectedSignSha256 = crypto.createHash("sha256")
-          .update(`${NICEPAY_MERCHANT_ID}${amountStr}${deal.id}${NICEPAY_SECRET}`)
-          .digest("hex");
-        const received = String(sign).toLowerCase();
-        if (received !== expectedSignMd5 && received !== expectedSignSha256) {
-          console.warn(`[nicepay] Неверная подпись вебхука: получено ${received}`);
-          return res.status(401).json({ error: "Неверная подпись NicePay" });
-        }
+      if (!sign) {
+        console.warn(`[nicepay] Вебхук без подписи по сделке ${deal.id}`);
+        return res.status(401).json({ error: "Отсутствует подпись NicePay" });
+      }
+      const amountStr = String(b.amount ?? b.sum ?? b.value);
+      const expectedSignMd5 = crypto.createHash("md5")
+        .update(`${NICEPAY_MERCHANT_ID}${NICEPAY_SECRET}${amountStr}${deal.id}`)
+        .digest("hex");
+      const expectedSignSha256 = crypto.createHash("sha256")
+        .update(`${NICEPAY_MERCHANT_ID}${amountStr}${deal.id}${NICEPAY_SECRET}`)
+        .digest("hex");
+      const received = String(sign).toLowerCase();
+      if (received !== expectedSignMd5 && received !== expectedSignSha256) {
+        console.warn(`[nicepay] Неверная подпись вебхука по сделке ${deal.id}`);
+        return res.status(401).json({ error: "Неверная подпись NicePay" });
       }
     }
 
-    // Сверка подписи RuKassa
+    // Сверка подписи RuKassa (при настроенном токене подпись обязательна)
     if (provider === "rukassa" && RUKASSA_TOKEN) {
       const sign = b.signature || b.sign;
-      if (sign) {
-        const amountStr = String(b.amount ?? b.sum ?? b.value);
-        const expectedSign = crypto.createHash("md5")
-          .update(`${RUKASSA_SHOP_ID}${amountStr}${deal.id}${RUKASSA_TOKEN}`)
-          .digest("hex");
-        if (String(sign).toLowerCase() !== expectedSign) {
-          console.warn(`[rukassa] Неверная подпись вебхука: получено ${sign}`);
-          return res.status(401).json({ error: "Неверная подпись RuKassa" });
-        }
+      if (!sign) {
+        console.warn(`[rukassa] Вебхук без подписи по сделке ${deal.id}`);
+        return res.status(401).json({ error: "Отсутствует подпись RuKassa" });
       }
+      const amountStr = String(b.amount ?? b.sum ?? b.value);
+      const expectedSign = crypto.createHash("md5")
+        .update(`${RUKASSA_SHOP_ID}${amountStr}${deal.id}${RUKASSA_TOKEN}`)
+        .digest("hex");
+      if (String(sign).toLowerCase() !== expectedSign) {
+        console.warn(`[rukassa] Неверная подпись вебхука по сделке ${deal.id}`);
+        return res.status(401).json({ error: "Неверная подпись RuKassa" });
+      }
+    }
+
+    // Сверка валюты (если шлюз её сообщает)
+    const paidCurrency = String(b.currency || b.currency_code || "").trim().toUpperCase();
+    if (paidCurrency && paidCurrency !== String(deal.currency).toUpperCase()) {
+      console.warn(`[${provider}] Сделка ${deal.id}: валюта ${paidCurrency} ≠ ${deal.currency}`);
+      return res.status(400).json({ error: "Валюта платежа не совпадает" });
     }
 
     const paidAmount = parseFloat(b.amount ?? b.sum ?? b.value);
@@ -1544,6 +1766,11 @@ function adminMenuButtons(inGroup = false) {
   }
 }
 
+function adminAppButton(text) {
+  if (!PUBLIC_URL) return undefined;
+  return { inline_keyboard: [[{ text, web_app: { url: PUBLIC_URL + "/?admin=1" } }]] };
+}
+
 function dealTemplateButtonText(deal) {
   const amountText = formatAmount(deal.amount, deal.currency);
   const reserve = Math.max(0, 64 - amountText.length - 3);
@@ -1579,7 +1806,7 @@ function createDealFromTemplate(template, buyer) {
   if (!Number.isFinite(amount) || amount <= 0) {
     return null;
   }
-  const fee = (amount * FEE_PERCENT) / 100;
+  const fee = dealAmount((amount * FEE_PERCENT) / 100);
   const buyerUsername = buyer.username && String(buyer.username).trim()
     ? `@${String(buyer.username).trim()}`
     : "";
@@ -1597,7 +1824,7 @@ function createDealFromTemplate(template, buyer) {
     method: KNOWN_METHODS.includes(template.method) ? template.method : "xrocket",
     feePercent: FEE_PERCENT,
     fee,
-    total: amount + fee,
+    total: dealAmount(amount + fee),
     status: "new",
     sourceTemplateId: template.id,
     createdAt: Date.now(),
@@ -1632,8 +1859,9 @@ async function setupBot() {
         { command: "start", description: "Открыть CRB GA" },
         { command: "app", description: "Кнопка запуска приложения" },
         { command: "post", description: "Пост с кнопками на шаблоны сделок" },
-        { command: "admin", description: "Админ-меню гаранта" },
+        { command: "admin", description: "Админ-меню: оплаты и споры" },
         { command: "group", description: "Привязать текущую группу как админскую" },
+        { command: "setup", description: "Перенастроить профиль и команды бота" },
         { command: "deal", description: "Проверить сделку: /deal ID" },
         { command: "support", description: "Поддержка" }
       ]
@@ -1691,6 +1919,80 @@ async function handleInlineQuery(inline) {
   });
 }
 
+// Роутер callback-кнопок: инлайн-приглашения и админ-действия
+async function handleCallback(cq) {
+  const data = String(cq.data || "");
+  if (data.startsWith("tpl:")) return handleTemplateCallback(cq);
+  if (data.startsWith("apay:") || data.startsWith("ars:")) return handleAdminCallback(cq);
+  await tgCall("answerCallbackQuery", { callback_query_id: cq.id }).catch(() => {});
+}
+
+// Убрать кнопки у сообщения, чтобы действие нельзя было повторить
+async function clearMessageButtons(cq) {
+  if (!cq.message || !cq.message.chat) return;
+  await tgCall("editMessageReplyMarkup", {
+    chat_id: cq.message.chat.id,
+    message_id: cq.message.message_id,
+    reply_markup: { inline_keyboard: [] }
+  }).catch(() => {});
+}
+
+// Управление сделкой из Telegram: подтверждение оплаты и решение споров (только ADMIN_IDS)
+async function handleAdminCallback(cq) {
+  const fromId = cq.from && Number(cq.from.id);
+  if (!ADMIN_IDS.includes(fromId)) {
+    await tgCall("answerCallbackQuery", {
+      callback_query_id: cq.id,
+      text: "Действие доступно только гаранту.",
+      show_alert: true
+    }).catch(() => {});
+    return;
+  }
+  const data = String(cq.data || "");
+
+  if (data.startsWith("apay:")) {
+    const deal = findDeal(data.slice(5));
+    if (!deal) {
+      await tgCall("answerCallbackQuery", { callback_query_id: cq.id, text: "Сделка не найдена.", show_alert: true });
+      return;
+    }
+    const ok = confirmDealPaidByAdmin(deal, fromId);
+    await tgCall("answerCallbackQuery", {
+      callback_query_id: cq.id,
+      text: ok ? `Оплата по ${deal.id} подтверждена.` : "Сделка уже оплачена или закрыта.",
+      show_alert: !ok
+    });
+    if (ok) {
+      await clearMessageButtons(cq);
+      await notifyAdmins(`✅ Оплата по сделке <b>${deal.id}</b> подтверждена гарантом (ID ${fromId}).`);
+    }
+    return;
+  }
+
+  if (data.startsWith("ars:")) {
+    const parts = data.split(":"); // ars:<id>:<resolution>
+    const deal = findDeal(parts[1]);
+    const resolution = parts[2];
+    if (!deal) {
+      await tgCall("answerCallbackQuery", { callback_query_id: cq.id, text: "Сделка не найдена.", show_alert: true });
+      return;
+    }
+    const ok = resolveDispute(deal, resolution, fromId);
+    await tgCall("answerCallbackQuery", {
+      callback_query_id: cq.id,
+      text: ok
+        ? `Спор по ${deal.id} решён в пользу ${resolution === "seller" ? "продавца" : "покупателя"}.`
+        : "Спор уже закрыт или сделка не в статусе спора.",
+      show_alert: !ok
+    });
+    if (ok) {
+      await clearMessageButtons(cq);
+      await notifyAdmins(`⚖️ Спор по сделке <b>${deal.id}</b> решён гарантом (ID ${fromId}) в пользу ${resolution === "seller" ? "продавца" : "покупателя"}.`);
+    }
+    return;
+  }
+}
+
 async function handleTemplateCallback(cq) {
   const data = String(cq.data || "");
   if (!data.startsWith("tpl:")) return;
@@ -1709,6 +2011,21 @@ async function handleTemplateCallback(cq) {
     await tgCall("answerCallbackQuery", {
       callback_query_id: cq.id,
       text: "Нельзя принять собственный шаблон.",
+      show_alert: true
+    });
+    return;
+  }
+
+  // Повторное нажатие не плодит дубли: возвращаем уже открытую сделку
+  const existing = deals.find((d) =>
+    d.sourceTemplateId === template.id &&
+    Number(d.counterpartyId) === Number(cq.from.id) &&
+    ["new", "paid", "fulfilled"].includes(d.status)
+  );
+  if (existing) {
+    await tgCall("answerCallbackQuery", {
+      callback_query_id: cq.id,
+      text: `У вас уже есть сделка ${existing.id} по этому объявлению.`,
       show_alert: true
     });
     return;
@@ -1860,6 +2177,45 @@ async function sendDealSummary(chatId, deal, viewer, useAppButton) {
   });
 }
 
+// Отправить в чат карточки с кнопками действий по всем открытым задачам гаранта:
+// заявки об оплате Bitpapa (кнопка подтверждения) и споры (кнопки решения).
+async function sendPendingAdminItems(chatId) {
+  const pendingPay = deals
+    .filter((d) => d.status === "new" && d.bitpapaClaimedAt)
+    .sort((a, b) => (b.bitpapaClaimedAt || 0) - (a.bitpapaClaimedAt || 0))
+    .slice(0, 10);
+  const disputes = deals
+    .filter((d) => d.status === "dispute")
+    .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
+    .slice(0, 10);
+
+  if (!pendingPay.length && !disputes.length) {
+    await tgCall("sendMessage", { chat_id: chatId, text: "Открытых задач нет: подтверждений оплаты и споров не найдено." });
+    return;
+  }
+
+  for (const deal of pendingPay) {
+    await tgCall("sendMessage", {
+      chat_id: chatId,
+      parse_mode: "HTML",
+      text:
+        `💳 <b>${deal.id}</b> «${deal.title}»\n` +
+        `Покупатель сообщил об оплате (${deal.method}). Сумма: ${formatAmount(deal.total, deal.currency)}.`,
+      reply_markup: payConfirmKeyboard(deal)
+    }).catch(() => {});
+  }
+  for (const deal of disputes) {
+    await tgCall("sendMessage", {
+      chat_id: chatId,
+      parse_mode: "HTML",
+      text:
+        `⚠️ <b>${deal.id}</b> «${deal.title}»\n` +
+        `Спор на арбитраже. Сумма: ${formatAmount(deal.total, deal.currency)}.`,
+      reply_markup: disputeKeyboard(deal)
+    }).catch(() => {});
+  }
+}
+
 async function handleGroupMessage(msg) {
   const chat = msg.chat;
   if (!chat || (chat.type !== "group" && chat.type !== "supergroup")) return;
@@ -1941,6 +2297,7 @@ async function handleGroupMessage(msg) {
         `Текущая группа: ${adminGroupLabel()}`,
       reply_markup: adminMenuButtons(true)
     });
+    await sendPendingAdminItems(chat.id);
     return;
   }
 
@@ -2035,8 +2392,22 @@ async function handleUpdate(upd) {
         `Активных: ${active}\n` +
         `Споров на арбитраже: ${disputes}\n` +
         `Ожидают подтверждения оплаты: ${awaiting}\n\n` +
-        "Подтверждение оплат и решение споров — во вкладке «Админ» приложения.",
-      reply_markup: adminMenuButtons(false)
+        "Подтверждайте оплаты и решайте споры прямо здесь кнопками ниже или во вкладке «Админ» приложения.",
+      reply_markup: adminAppButton("Открыть админ-панель")
+    });
+    await sendPendingAdminItems(chatId);
+  } else if (cmd === "/setup") {
+    if (!isAdmin) {
+      await tgCall("sendMessage", { chat_id: chatId, text: "Команда доступна только гаранту." });
+      return;
+    }
+    await setupBot();
+    await tgCall("sendMessage", {
+      chat_id: chatId,
+      text:
+        "🔧 Бот перенастроен: имя, описание, команды и кнопка меню обновлены из текущего профиля.\n" +
+        (PUBLIC_URL ? `Mini App: ${PUBLIC_URL}/` : "PUBLIC_URL не задан — кнопка меню Mini App не установлена."),
+      reply_markup: appButton("Открыть CRB GA")
     });
   } else if (cmd === "/post") {
     const templates = getDealTemplates(msg.from.id);
@@ -2107,6 +2478,10 @@ async function handleCallbackQuery(cq) {
 
   if (data.startsWith("tpl:")) {
     return handleTemplateCallback(cq);
+  }
+
+  if (data.startsWith("apay:") || data.startsWith("ars:")) {
+    return handleAdminCallback(cq);
   }
   
   if (data === "bot_support" && chatId) {
@@ -2266,12 +2641,22 @@ async function botLoop() {
   const last = await tgCall("getUpdates", { offset: -1, limit: 1 });
   if (last.ok && last.result.length) offset = last.result[0].update_id + 1;
 
+  let backoff = 1000;
   for (;;) {
     const res = await tgCall("getUpdates", { offset, timeout: 50 });
     if (!res.ok) {
-      await new Promise((r) => setTimeout(r, 3000));
+      // Неверный/отозванный токен — нет смысла крутить цикл, ждём смены токена
+      if (res.error_code === 401 || res.error_code === 404) {
+        console.error("[bot] BOT_TOKEN отклонён Telegram — long-polling остановлен. Обновите токен в админ-панели или /setup.");
+        botLoopStarted = false;
+        return;
+      }
+      // 409 (конфликт с другим getUpdates/webhook) и сетевые ошибки — экспоненциальный бэкофф
+      await new Promise((r) => setTimeout(r, backoff));
+      backoff = Math.min(backoff * 2, 30000);
       continue;
     }
+    backoff = 1000;
     for (const upd of res.result) {
       offset = upd.update_id + 1;
       handleUpdate(upd).catch((e) => console.error("[bot] update:", e.message));
@@ -2279,15 +2664,64 @@ async function botLoop() {
   }
 }
 
-// Отдаём фронтенд, если он лежит рядом (можно хостить всё одним сервисом)
-app.use(express.static(path.join(__dirname, "..")));
+// Отдаём фронтенд, если он лежит рядом (можно хостить всё одним сервисом).
+// Только allowlist путей: раздача всего корня репозитория открывала бы
+// backend/.env, runtime_settings.json (токен бота), deals.json и .git.
+const FRONTEND_ROOT = path.join(__dirname, "..");
+const PUBLIC_PATH_RE = /^\/(?:$|index\.html$|settings\.html$|favicon\.ico$|css\/|js\/)/;
+const staticHandler = express.static(FRONTEND_ROOT, { index: "index.html", dotfiles: "deny" });
 
-app.listen(PORT, () => {
-  console.log(`CRB GA backend запущен на порту ${PORT}`);
-  if (!getBotToken()) console.warn("⚠️  BOT_TOKEN не задан — авторизация и бот работать не будут");
-  if (!XROCKET_API_KEY) console.warn("⚠️  XROCKET_API_KEY не задан — счета xRocket создаваться не будут");
-  if (!WEBHOOK_SECRET) console.warn("⚠️  WEBHOOK_SECRET не задан — вебхуки шлюзов отключены");
-  if (getBotToken()) {
-    ensureBotRuntime().catch((e) => console.error("[bot] setup:", e.message));
+app.use((req, res, next) => {
+  if (req.method !== "GET" && req.method !== "HEAD") return next();
+  // Проверяем декодированный путь: ".." (в т.ч. как %2e%2e) в пути
+  // не имеет легитимного применения — режем обходы вида /js/../backend/
+  let decodedPath;
+  try {
+    decodedPath = decodeURIComponent(req.path);
+  } catch (e) {
+    return next();
   }
+  if (decodedPath.includes("..") || decodedPath.includes("\\") || decodedPath.includes("\0")) return next();
+  if (!PUBLIC_PATH_RE.test(decodedPath)) return next();
+  return staticHandler(req, res, next);
 });
+
+// Ссылки вида PUBLIC_URL/deal/<id> из счетов ведут на главную Mini App
+app.get("/deal/:id", (req, res) => res.redirect("/"));
+
+function startServer(port = PORT) {
+  const server = app.listen(port, () => {
+    console.log(`CRB GA backend запущен на порту ${port}`);
+    if (!getBotToken()) console.warn("⚠️  BOT_TOKEN не задан — авторизация и бот работать не будут");
+    if (!XROCKET_API_KEY) console.warn("⚠️  XROCKET_API_KEY не задан — счета xRocket создаваться не будут");
+    if (!WEBHOOK_SECRET) console.warn("⚠️  WEBHOOK_SECRET не задан — вебхуки шлюзов отключены");
+    if (LOCAL_ADMIN_ENABLED) console.warn("⚠️  Локальный админ-доступ включён (LOCAL_ADMIN); в production задайте NODE_ENV=production или LOCAL_ADMIN=0");
+    if (getBotToken()) {
+      ensureBotRuntime().catch((e) => console.error("[bot] setup:", e.message));
+    }
+  });
+  return server;
+}
+
+if (require.main === module) {
+  const server = startServer();
+
+  function shutdown(signal) {
+    console.log(`[server] Получен ${signal}, останавливаемся...`);
+    persist();
+    server.close(() => process.exit(0));
+    setTimeout(() => process.exit(0), 5000).unref();
+  }
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
+  process.on("SIGINT", () => shutdown("SIGINT"));
+}
+
+// Экспорт для тестов
+module.exports = {
+  app,
+  startServer,
+  applyConfigFromEnv,
+  validateInitData,
+  validateToken,
+  issueToken
+};
