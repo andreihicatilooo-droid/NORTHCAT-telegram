@@ -1,0 +1,1179 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>CRB GA — Настройки сервера</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script src="js/config.js"></script>
+  <style>
+    :root {
+      --bg: #090b10;
+      --surface: #0f1320;
+      --surface-2: #141929;
+      --surface-3: #1a2030;
+      --border: #1e2638;
+      --border-hover: #2a3552;
+      --text: #e8ebf2;
+      --text-secondary: #a8b2cc;
+      --hint: #6b7590;
+      --accent: #3e6ce0;
+      --accent-hover: #345cc4;
+      --accent-glow: rgba(62, 108, 224, 0.25);
+      --accent-light: rgba(62, 108, 224, 0.12);
+      --green: #2ebd6f;
+      --green-dim: rgba(46, 189, 111, 0.15);
+      --yellow: #e0a020;
+      --yellow-dim: rgba(224, 160, 32, 0.15);
+      --red: #d94f4f;
+      --red-dim: rgba(217, 79, 79, 0.15);
+      --purple: #8b7fd0;
+      --radius: 12px;
+      --radius-sm: 8px;
+      --radius-lg: 16px;
+      --transition: 0.18s cubic-bezier(0.4, 0, 0.2, 1);
+      --spring: 0.38s cubic-bezier(0.34, 1.56, 0.64, 1);
+      --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.35);
+      --shadow-md: 0 4px 20px rgba(0, 0, 0, 0.5);
+      --shadow-accent: 0 4px 24px rgba(62, 108, 224, 0.25);
+    }
+
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(16px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    @keyframes shimmer {
+      0%   { background-position: -200% 0; }
+      100% { background-position:  200% 0; }
+    }
+
+    @keyframes ripple {
+      to { transform: scale(4); opacity: 0; }
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    @keyframes toastIn {
+      from { opacity: 0; transform: translateX(-50%) translateY(20px); }
+      to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+    }
+
+    @keyframes toastOut {
+      from { opacity: 1; transform: translateX(-50%) translateY(0); }
+      to   { opacity: 0; transform: translateX(-50%) translateY(20px); }
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    html, body {
+      height: 100%;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      font-size: 14px;
+      line-height: 1.45;
+      user-select: none;
+      -webkit-user-select: none;
+      overflow: hidden;
+    }
+
+    #settings-app {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      height: 100dvh;
+      padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left);
+      background: var(--bg);
+    }
+
+    /* --------- Header --------- */
+
+    .s-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+      background: rgba(9, 11, 16, 0.85);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+
+    .s-back {
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--text-secondary);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      flex-shrink: 0;
+      transition: border-color var(--transition), background var(--transition), transform var(--transition);
+    }
+
+    .s-back:hover {
+      border-color: var(--border-hover);
+      background: var(--surface-2);
+    }
+
+    .s-back:active {
+      transform: scale(0.9);
+    }
+
+    .s-back svg {
+      width: 18px;
+      height: 18px;
+    }
+
+    .s-header-text {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+    }
+
+    .s-header-title {
+      font-size: 17px;
+      font-weight: 800;
+      letter-spacing: -0.01em;
+      background: linear-gradient(135deg, var(--text) 0%, var(--text-secondary) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .s-header-sub {
+      font-size: 11px;
+      color: var(--hint);
+      margin-top: 1px;
+    }
+
+    /* --------- Content --------- */
+
+    .s-content {
+      flex: 1;
+      overflow-y: auto;
+      overflow-x: hidden;
+      overscroll-behavior: contain;
+      padding: 16px 16px 100px;
+      scrollbar-width: thin;
+      scrollbar-color: var(--border) transparent;
+    }
+
+    .s-content::-webkit-scrollbar {
+      width: 3px;
+    }
+    .s-content::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    .s-content::-webkit-scrollbar-thumb {
+      background: var(--border);
+      border-radius: 2px;
+    }
+
+    /* --------- Section Card --------- */
+
+    .s-section {
+      border: 1.5px solid var(--border);
+      border-radius: var(--radius-lg);
+      background: var(--surface);
+      padding: 16px;
+      margin-bottom: 12px;
+      opacity: 0;
+      animation: fadeUp 0.35s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+      transition: border-color var(--transition);
+    }
+
+    .s-section:hover {
+      border-color: var(--border-hover);
+    }
+
+    .s-section-title {
+      font-size: 13px;
+      font-weight: 800;
+      letter-spacing: 0.01em;
+      margin-bottom: 14px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .s-section-title .s-emoji {
+      font-size: 16px;
+      flex-shrink: 0;
+    }
+
+    .s-section-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    @media (max-width: 480px) {
+      .s-section-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .s-field {
+      position: relative;
+    }
+
+    .s-field--full {
+      grid-column: 1 / -1;
+    }
+
+    .s-label {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.09em;
+      color: var(--hint);
+      margin-bottom: 7px;
+      transition: color var(--transition);
+    }
+
+    .s-field:focus-within .s-label {
+      color: var(--accent);
+    }
+
+    .s-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      flex-shrink: 0;
+      transition: background var(--transition), box-shadow var(--transition);
+    }
+
+    .s-dot--set {
+      background: var(--green);
+      box-shadow: 0 0 6px rgba(46, 189, 111, 0.4);
+    }
+
+    .s-dot--empty {
+      background: var(--hint);
+      opacity: 0.35;
+    }
+
+    .s-input-wrap {
+      position: relative;
+      display: flex;
+      align-items: center;
+    }
+
+    .s-input {
+      width: 100%;
+      border: 1.5px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface-2);
+      color: var(--text);
+      font-size: 14px;
+      font-family: inherit;
+      padding: 11px 13px;
+      outline: none;
+      transition: border-color var(--transition), box-shadow var(--transition), background var(--transition);
+    }
+
+    .s-input:hover {
+      border-color: var(--border-hover);
+    }
+
+    .s-input:focus {
+      border-color: var(--accent);
+      background: var(--surface-3);
+      box-shadow: 0 0 0 3px var(--accent-light);
+    }
+
+    .s-input::placeholder {
+      color: var(--hint);
+      opacity: 0.6;
+    }
+
+    .s-input--password {
+      padding-right: 42px;
+    }
+
+    .s-eye {
+      position: absolute;
+      right: 10px;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 28px;
+      height: 28px;
+      border-radius: 6px;
+      border: none;
+      background: none;
+      color: var(--hint);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: color var(--transition), background var(--transition);
+    }
+
+    .s-eye:hover {
+      color: var(--text-secondary);
+      background: var(--surface-3);
+    }
+
+    .s-eye svg {
+      width: 16px;
+      height: 16px;
+    }
+
+    .s-hint {
+      font-size: 11px;
+      color: var(--hint);
+      margin-top: 5px;
+      opacity: 0.75;
+    }
+
+    /* --------- Save Footer --------- */
+
+    .s-footer {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      padding: 12px 16px;
+      padding-bottom: calc(12px + env(safe-area-inset-bottom));
+      background: rgba(9, 11, 16, 0.92);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      border-top: 1px solid var(--border);
+      z-index: 20;
+      display: flex;
+      gap: 10px;
+    }
+
+    .s-btn {
+      flex: 1;
+      border-radius: var(--radius);
+      font-size: 14px;
+      font-weight: 600;
+      font-family: inherit;
+      padding: 13px;
+      cursor: pointer;
+      position: relative;
+      overflow: hidden;
+      transition: transform var(--transition), box-shadow var(--transition),
+                  opacity var(--transition), background var(--transition),
+                  border-color var(--transition);
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    .s-btn--primary {
+      border: 1px solid var(--accent);
+      background: linear-gradient(135deg, var(--accent) 0%, #2d58c8 100%);
+      color: #fff;
+      box-shadow: 0 2px 12px rgba(62, 108, 224, 0.3);
+    }
+
+    .s-btn--primary:hover {
+      box-shadow: 0 4px 20px rgba(62, 108, 224, 0.45);
+      transform: translateY(-1px);
+    }
+
+    .s-btn--primary:active {
+      background: var(--accent-hover);
+      box-shadow: 0 1px 6px rgba(62, 108, 224, 0.2);
+      transform: scale(0.98) translateY(0);
+    }
+
+    .s-btn--primary:disabled {
+      opacity: 0.45;
+      cursor: default;
+      transform: none;
+      box-shadow: none;
+    }
+
+    .s-btn--outline {
+      border: 1px solid var(--border);
+      background: none;
+      color: var(--text);
+      transition: border-color var(--transition), background var(--transition), transform var(--transition);
+    }
+
+    .s-btn--outline:hover {
+      border-color: var(--border-hover);
+      background: var(--surface-2);
+    }
+
+    .s-btn--outline:active {
+      transform: scale(0.98);
+    }
+
+    /* Ripple */
+    .s-btn .ripple {
+      position: absolute;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.18);
+      transform: scale(0);
+      animation: ripple 0.55s linear;
+      pointer-events: none;
+    }
+
+    /* Spinner */
+    .s-spinner {
+      display: inline-block;
+      width: 16px;
+      height: 16px;
+      border: 2px solid rgba(255,255,255,0.25);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin 0.6s linear infinite;
+      vertical-align: middle;
+      margin-right: 6px;
+    }
+
+    /* --------- Skeleton --------- */
+
+    .s-skeleton {
+      padding: 16px;
+    }
+
+    .s-skeleton-card {
+      border: 1.5px solid var(--border);
+      border-radius: var(--radius-lg);
+      background: var(--surface);
+      padding: 16px;
+      margin-bottom: 12px;
+    }
+
+    .s-skeleton-line {
+      height: 12px;
+      border-radius: 6px;
+      background: linear-gradient(90deg,
+        var(--surface-2) 25%,
+        var(--surface-3) 50%,
+        var(--surface-2) 75%
+      );
+      background-size: 200% 100%;
+      animation: shimmer 1.5s infinite;
+      margin-bottom: 10px;
+    }
+
+    .s-skeleton-line:last-child {
+      margin-bottom: 0;
+    }
+
+    .s-skeleton-line--title {
+      width: 45%;
+      height: 14px;
+      margin-bottom: 16px;
+    }
+
+    .s-skeleton-line--short {
+      width: 40%;
+    }
+
+    .s-skeleton-line--medium {
+      width: 70%;
+    }
+
+    .s-skeleton-line--full {
+      width: 100%;
+      height: 38px;
+      border-radius: var(--radius);
+    }
+
+    .s-skeleton-pair {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-bottom: 10px;
+    }
+
+    @media (max-width: 480px) {
+      .s-skeleton-pair {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .s-skeleton-field {
+      display: flex;
+      flex-direction: column;
+      gap: 7px;
+    }
+
+    /* --------- Toast --------- */
+
+    .s-toast {
+      position: fixed;
+      bottom: calc(env(safe-area-inset-bottom) + 80px);
+      left: 50%;
+      transform: translateX(-50%) translateY(12px);
+      background: var(--surface-3);
+      border: 1px solid var(--border-hover);
+      border-radius: 20px;
+      padding: 10px 20px;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text);
+      box-shadow: var(--shadow-md);
+      opacity: 0;
+      pointer-events: none;
+      white-space: nowrap;
+      z-index: 200;
+      transition: opacity 0.25s, transform 0.25s cubic-bezier(0.34, 1.2, 0.64, 1);
+    }
+
+    .s-toast--visible {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+      pointer-events: auto;
+    }
+
+    .s-toast--success {
+      border-color: rgba(46, 189, 111, 0.4);
+      background: linear-gradient(135deg, var(--surface-3) 0%, rgba(46, 189, 111, 0.08) 100%);
+    }
+
+    .s-toast--error {
+      border-color: rgba(217, 79, 79, 0.4);
+      background: linear-gradient(135deg, var(--surface-3) 0%, rgba(217, 79, 79, 0.08) 100%);
+    }
+
+    /* --------- Change counter badge --------- */
+
+    .s-changes-badge {
+      display: none;
+      margin-left: 6px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: var(--accent);
+      color: #fff;
+      font-size: 11px;
+      font-weight: 700;
+      line-height: 1;
+      vertical-align: middle;
+    }
+
+    .s-changes-badge--visible {
+      display: inline-block;
+    }
+
+    /* --------- Authorization Overlay --------- */
+    .s-auth-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 1000;
+      background: var(--bg);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      animation: fadeUp 0.4s var(--transition) both;
+    }
+
+    .s-auth-card {
+      width: 100%;
+      max-width: 360px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      background: var(--surface);
+      padding: 32px 24px;
+      text-align: center;
+      box-shadow: var(--shadow-md);
+      animation: fadeUp 0.45s 0.1s cubic-bezier(0.34, 1.2, 0.64, 1) both;
+    }
+
+    .s-auth-logo {
+      font-size: 24px;
+      font-weight: 800;
+      letter-spacing: 0.22em;
+      background: linear-gradient(135deg, #fff 0%, var(--text-secondary) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      margin-bottom: 8px;
+    }
+
+    .s-auth-tagline {
+      color: var(--hint);
+      font-size: 13px;
+      margin-top: 6px;
+    }
+
+    .s-auth-divider {
+      height: 1px;
+      background: linear-gradient(90deg, transparent, var(--border), transparent);
+      margin: 20px 0;
+    }
+
+    .s-auth-widget {
+      display: flex;
+      justify-content: center;
+      margin: 24px 0;
+      min-height: 40px;
+    }
+
+    .s-auth-hint {
+      color: var(--text-secondary);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+  </style>
+</head>
+<body>
+  <div class="s-auth-overlay" id="auth-overlay" style="display:none">
+    <div class="s-auth-card">
+      <div class="s-auth-logo">CRB GA</div>
+      <div class="s-auth-tagline">Настройки сервера безопасности</div>
+      <div class="s-auth-divider"></div>
+      <div class="s-auth-widget" id="tg-login-widget"></div>
+      <p class="s-auth-hint">Для управления настройками бэкенда необходима авторизация через Telegram.</p>
+    </div>
+  </div>
+
+  <div id="settings-app">
+
+    <!-- Header -->
+    <header class="s-header">
+      <button class="s-back" id="back-btn" title="Назад">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M15 18l-6-6 6-6"/>
+        </svg>
+      </button>
+      <div class="s-header-text">
+        <div class="s-header-title">⚙️ Настройки сервера</div>
+        <div class="s-header-sub">backend / .env</div>
+      </div>
+    </header>
+
+    <!-- Content -->
+    <div class="s-content" id="content">
+
+      <!-- Skeleton loading state -->
+      <div class="s-skeleton" id="skeleton">
+        <div class="s-skeleton-card">
+          <div class="s-skeleton-line s-skeleton-line--title"></div>
+          <div class="s-skeleton-pair">
+            <div class="s-skeleton-field">
+              <div class="s-skeleton-line s-skeleton-line--short"></div>
+              <div class="s-skeleton-line s-skeleton-line--full"></div>
+            </div>
+            <div class="s-skeleton-field">
+              <div class="s-skeleton-line s-skeleton-line--short"></div>
+              <div class="s-skeleton-line s-skeleton-line--full"></div>
+            </div>
+          </div>
+          <div class="s-skeleton-pair">
+            <div class="s-skeleton-field">
+              <div class="s-skeleton-line s-skeleton-line--medium"></div>
+              <div class="s-skeleton-line s-skeleton-line--full"></div>
+            </div>
+            <div class="s-skeleton-field">
+              <div class="s-skeleton-line s-skeleton-line--short"></div>
+              <div class="s-skeleton-line s-skeleton-line--full"></div>
+            </div>
+          </div>
+        </div>
+        <div class="s-skeleton-card">
+          <div class="s-skeleton-line s-skeleton-line--title"></div>
+          <div class="s-skeleton-pair">
+            <div class="s-skeleton-field">
+              <div class="s-skeleton-line s-skeleton-line--short"></div>
+              <div class="s-skeleton-line s-skeleton-line--full"></div>
+            </div>
+            <div class="s-skeleton-field">
+              <div class="s-skeleton-line s-skeleton-line--medium"></div>
+              <div class="s-skeleton-line s-skeleton-line--full"></div>
+            </div>
+          </div>
+        </div>
+        <div class="s-skeleton-card">
+          <div class="s-skeleton-line s-skeleton-line--title"></div>
+          <div class="s-skeleton-pair">
+            <div class="s-skeleton-field">
+              <div class="s-skeleton-line s-skeleton-line--short"></div>
+              <div class="s-skeleton-line s-skeleton-line--full"></div>
+            </div>
+            <div class="s-skeleton-field">
+              <div class="s-skeleton-line s-skeleton-line--short"></div>
+              <div class="s-skeleton-line s-skeleton-line--full"></div>
+            </div>
+          </div>
+          <div class="s-skeleton-pair">
+            <div class="s-skeleton-field">
+              <div class="s-skeleton-line s-skeleton-line--medium"></div>
+              <div class="s-skeleton-line s-skeleton-line--full"></div>
+            </div>
+            <div class="s-skeleton-field">
+              <div class="s-skeleton-line s-skeleton-line--short"></div>
+              <div class="s-skeleton-line s-skeleton-line--full"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Settings form (hidden until loaded) -->
+      <form id="settings-form" autocomplete="off" style="display:none"></form>
+    </div>
+
+    <!-- Save footer -->
+    <div class="s-footer">
+      <button class="s-btn s-btn--outline" type="button" id="reset-btn">Сбросить</button>
+      <button class="s-btn s-btn--primary" type="button" id="save-btn" disabled>
+        Сохранить<span class="s-changes-badge" id="changes-badge">0</span>
+      </button>
+    </div>
+
+    <!-- Toast -->
+    <div class="s-toast" id="toast"></div>
+  </div>
+
+  <script>
+  (function() {
+    'use strict';
+
+    /* ============================================
+     *  SETTINGS SCHEMA
+     * ============================================ */
+
+    const SECTIONS = [
+      {
+        id: 'telegram',
+        icon: '🤖',
+        title: 'Telegram-бот',
+        fields: [
+          { key: 'BOT_TOKEN',       label: 'BOT_TOKEN',       type: 'password' },
+          { key: 'ADMIN_IDS',       label: 'ADMIN_IDS',       type: 'text', hint: 'Telegram ID через запятую' },
+          { key: 'ADMIN_GROUP_ID',  label: 'ADMIN_GROUP_ID',  type: 'text', hint: 'chat_id группы' },
+        ]
+      },
+      {
+        id: 'xrocket',
+        icon: '💰',
+        title: 'xRocket Pay',
+        fields: [
+          { key: 'XROCKET_API_KEY', label: 'XROCKET_API_KEY', type: 'password' },
+          { key: 'XROCKET_API_URL', label: 'XROCKET_API_URL', type: 'text', placeholder: 'https://pay.xrocket.tg' },
+        ]
+      },
+      {
+        id: 'gateways',
+        icon: '🔌',
+        title: 'Платёжные шлюзы',
+        fields: [
+          { key: 'PGON_API_URL',        label: 'PGON_API_URL',        type: 'text' },
+          { key: 'PGON_API_KEY',        label: 'PGON_API_KEY',        type: 'password' },
+          { key: 'NICEPAY_MERCHANT_ID', label: 'NICEPAY_MERCHANT_ID', type: 'text' },
+          { key: 'NICEPAY_SECRET',      label: 'NICEPAY_SECRET',      type: 'password' },
+          { key: 'RUKASSA_SHOP_ID',     label: 'RUKASSA_SHOP_ID',     type: 'text' },
+          { key: 'RUKASSA_TOKEN',       label: 'RUKASSA_TOKEN',       type: 'password' },
+        ]
+      },
+      {
+        id: 'bitpapa',
+        icon: '🟡',
+        title: 'Bitpapa',
+        fields: [
+          { key: 'BITPAPA_API_TOKEN', label: 'BITPAPA_API_TOKEN', type: 'password' },
+        ]
+      },
+      {
+        id: 'security',
+        icon: '🔒',
+        title: 'Безопасность',
+        fields: [
+          { key: 'WEBHOOK_SECRET', label: 'WEBHOOK_SECRET', type: 'password', hint: 'Секрет для URL вебхуков' },
+        ]
+      },
+      {
+        id: 'general',
+        icon: '🌐',
+        title: 'Общие',
+        fields: [
+          { key: 'PUBLIC_URL',   label: 'PUBLIC_URL',   type: 'text',   hint: 'Публичный URL бэкенда' },
+          { key: 'FEE_PERCENT',  label: 'FEE_PERCENT',  type: 'number', hint: 'Комиссия гаранта %', min: 0, step: 0.1 },
+          { key: 'PORT',         label: 'PORT',         type: 'number', hint: 'Порт HTTP-сервера' },
+        ]
+      }
+    ];
+
+    /* ============================================
+     *  STATE
+     * ============================================ */
+
+    let serverValues = {};   // { key: maskedValue } from GET
+    let inputElements = {};  // { key: HTMLInputElement }
+    let isSaving = false;
+
+    /* ============================================
+     *  AUTH
+     * ============================================ */
+
+    function getApiBase() {
+      return window.location.origin;
+    }
+
+    function getAuthHeaders() {
+      const headers = { 'Content-Type': 'application/json' };
+      try {
+        const tg = window.Telegram && window.Telegram.WebApp;
+        if (tg && tg.initData) {
+          headers['X-Telegram-Init-Data'] = tg.initData;
+          return headers;
+        }
+      } catch (_) {}
+      const token = localStorage.getItem('northcat_auth_v1');
+      if (token) {
+        headers['X-Auth-Token'] = token;
+      }
+      return headers;
+    }
+
+    /* ============================================
+     *  API
+     * ============================================ */
+
+    async function fetchEnv() {
+      const resp = await fetch(getApiBase() + '/api/admin/env', {
+        method: 'GET',
+        headers: getAuthHeaders()
+      });
+      if (!resp.ok) throw new Error('Ошибка загрузки: ' + resp.status);
+      return resp.json();
+    }
+
+    async function saveEnv(changes) {
+      const resp = await fetch(getApiBase() + '/api/admin/env', {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify(changes)
+      });
+      if (!resp.ok) {
+        const body = await resp.text().catch(() => '');
+        throw new Error(body || 'Ошибка сохранения: ' + resp.status);
+      }
+      return resp.json();
+    }
+
+    /* ============================================
+     *  TOAST
+     * ============================================ */
+
+    let toastTimer = null;
+
+    function showToast(message, type) {
+      const el = document.getElementById('toast');
+      el.textContent = message;
+      el.className = 's-toast s-toast--visible' + (type ? ' s-toast--' + type : '');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(function() {
+        el.classList.remove('s-toast--visible');
+      }, 3000);
+    }
+
+    /* ============================================
+     *  RIPPLE
+     * ============================================ */
+
+    function addRipple(e) {
+      const btn = e.currentTarget;
+      const circle = document.createElement('span');
+      const d = Math.max(btn.clientWidth, btn.clientHeight);
+      const rect = btn.getBoundingClientRect();
+      circle.style.width = circle.style.height = d + 'px';
+      circle.style.left = (e.clientX - rect.left - d / 2) + 'px';
+      circle.style.top = (e.clientY - rect.top - d / 2) + 'px';
+      circle.classList.add('ripple');
+      btn.appendChild(circle);
+      circle.addEventListener('animationend', function() { circle.remove(); });
+    }
+
+    /* ============================================
+     *  RENDER FORM
+     * ============================================ */
+
+    function renderForm(data) {
+      serverValues = data || {};
+      const form = document.getElementById('settings-form');
+      form.innerHTML = '';
+
+      SECTIONS.forEach(function(section, si) {
+        const card = document.createElement('div');
+        card.className = 's-section';
+        card.style.animationDelay = (si * 0.06) + 's';
+
+        let html = '<div class="s-section-title">' +
+          '<span class="s-emoji">' + section.icon + '</span>' +
+          section.title +
+          '</div><div class="s-section-grid">';
+
+        section.fields.forEach(function(field) {
+          const val = serverValues[field.key] || '';
+          const isSet = !!val;
+          const isPassword = field.type === 'password';
+          const inputType = isPassword ? 'password' : field.type;
+          const cssExtra = isPassword ? ' s-input--password' : '';
+          const fullClass = section.fields.length === 1 ? ' s-field--full' : '';
+
+          html += '<div class="s-field' + fullClass + '">';
+          html += '<label class="s-label">';
+          html += '<span class="s-dot ' + (isSet ? 's-dot--set' : 's-dot--empty') + '" data-dot="' + field.key + '"></span>';
+          html += field.label;
+          html += '</label>';
+          html += '<div class="s-input-wrap">';
+          html += '<input class="s-input' + cssExtra + '" data-key="' + field.key + '"';
+          html += ' type="' + inputType + '"';
+          if (val) html += ' placeholder="' + escHtml(val) + '"';
+          else if (field.placeholder) html += ' placeholder="' + escHtml(field.placeholder) + '"';
+          if (field.min !== undefined) html += ' min="' + field.min + '"';
+          if (field.step !== undefined) html += ' step="' + field.step + '"';
+          html += ' autocomplete="off">';
+          if (isPassword) {
+            html += '<button type="button" class="s-eye" data-target="' + field.key + '" title="Показать/скрыть">';
+            html += '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">';
+            html += '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>';
+            html += '<circle cx="12" cy="12" r="3"/>';
+            html += '</svg></button>';
+          }
+          html += '</div>';
+          if (field.hint) html += '<div class="s-hint">' + field.hint + '</div>';
+          html += '</div>';
+        });
+
+        html += '</div>';
+        card.innerHTML = html;
+        form.appendChild(card);
+      });
+
+      // cache input refs
+      inputElements = {};
+      form.querySelectorAll('.s-input').forEach(function(inp) {
+        var key = inp.getAttribute('data-key');
+        if (key) inputElements[key] = inp;
+      });
+
+      // eye toggles
+      form.querySelectorAll('.s-eye').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+          var target = btn.getAttribute('data-target');
+          var inp = inputElements[target];
+          if (!inp) return;
+          if (inp.type === 'password') {
+            inp.type = 'text';
+            btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">' +
+              '<path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24"/>' +
+              '<line x1="1" y1="1" x2="23" y2="23"/></svg>';
+          } else {
+            inp.type = 'password';
+            btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">' +
+              '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>' +
+              '<circle cx="12" cy="12" r="3"/></svg>';
+          }
+        });
+      });
+
+      // track changes
+      form.querySelectorAll('.s-input').forEach(function(inp) {
+        inp.addEventListener('input', updateChangeCount);
+      });
+
+      document.getElementById('skeleton').style.display = 'none';
+      form.style.display = 'block';
+      updateChangeCount();
+    }
+
+    function escHtml(s) {
+      return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    /* ============================================
+     *  CHANGE TRACKING
+     * ============================================ */
+
+    function getChangedFields() {
+      var changes = {};
+      Object.keys(inputElements).forEach(function(key) {
+        var inp = inputElements[key];
+        var val = inp.value.trim();
+        if (val && val !== (serverValues[key] || '')) {
+          changes[key] = val;
+        }
+      });
+      return changes;
+    }
+
+    function updateChangeCount() {
+      var changes = getChangedFields();
+      var count = Object.keys(changes).length;
+      var badge = document.getElementById('changes-badge');
+      var btn = document.getElementById('save-btn');
+      badge.textContent = count;
+      badge.className = 's-changes-badge' + (count > 0 ? ' s-changes-badge--visible' : '');
+      btn.disabled = count === 0;
+    }
+
+    /* ============================================
+     *  ACTIONS
+     * ============================================ */
+
+    // Save
+    document.getElementById('save-btn').addEventListener('click', async function(e) {
+      addRipple(e);
+      if (isSaving) return;
+      var changes = getChangedFields();
+      if (Object.keys(changes).length === 0) return;
+
+      isSaving = true;
+      var btn = document.getElementById('save-btn');
+      var origText = btn.innerHTML;
+      btn.innerHTML = '<span class="s-spinner"></span>Сохранение…';
+      btn.disabled = true;
+
+      try {
+        await saveEnv(changes);
+        showToast('✅ Настройки сохранены', 'success');
+        // reload fresh values
+        var data = await fetchEnv();
+        renderForm(data);
+      } catch (err) {
+        showToast('❌ ' + (err.message || 'Ошибка сохранения'), 'error');
+      } finally {
+        isSaving = false;
+        btn.innerHTML = 'Сохранить<span class="s-changes-badge" id="changes-badge">0</span>';
+        updateChangeCount();
+      }
+    });
+
+    // Reset
+    document.getElementById('reset-btn').addEventListener('click', function(e) {
+      addRipple(e);
+      Object.keys(inputElements).forEach(function(key) {
+        inputElements[key].value = '';
+      });
+      updateChangeCount();
+      showToast('Поля очищены', '');
+    });
+
+    // Back
+    document.getElementById('back-btn').addEventListener('click', function() {
+      try {
+        var tg = window.Telegram && window.Telegram.WebApp;
+        if (tg && tg.close) {
+          tg.close();
+          return;
+        }
+      } catch (_) {}
+      window.location.href = 'index.html';
+    });
+
+    // Ripple on buttons
+    document.querySelectorAll('.s-btn').forEach(function(btn) {
+      btn.addEventListener('click', addRipple);
+    });
+
+    /* ============================================
+     *  TELEGRAM MINI APP SETUP
+     * ============================================ */
+
+    try {
+      var tg = window.Telegram && window.Telegram.WebApp;
+      if (tg) {
+        tg.ready();
+        tg.expand();
+        if (tg.setHeaderColor) tg.setHeaderColor('#090b10');
+        if (tg.setBackgroundColor) tg.setBackgroundColor('#090b10');
+        if (tg.BackButton) {
+          tg.BackButton.show();
+          tg.BackButton.onClick(function() {
+            window.location.href = 'index.html';
+          });
+        }
+      }
+    } catch (_) {}
+
+    function showAuthScreen() {
+      document.getElementById('skeleton').style.display = 'none';
+      document.getElementById('settings-form').style.display = 'none';
+      document.getElementById('auth-overlay').style.display = 'flex';
+
+      var botUsername = (window.NORTHCAT_CONFIG && window.NORTHCAT_CONFIG.BOT_USERNAME) || 'CRBGABOT';
+      var container = document.getElementById('tg-login-widget');
+      if (container && !container.hasChildNodes()) {
+        window.onTelegramAuth = function (widgetUser) {
+          fetch(getApiBase() + '/api/auth/telegram', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(widgetUser)
+          })
+          .then(function (r) { return r.json(); })
+          .then(function (res) {
+            if (res && res.token) {
+              localStorage.setItem('northcat_auth_v1', res.token);
+              document.getElementById('auth-overlay').style.display = 'none';
+              document.getElementById('skeleton').style.display = 'block';
+              init();
+            } else {
+              alert('Не удалось подтвердить вход через Telegram.');
+            }
+          })
+          .catch(function () {
+            alert('Ошибка входа. Попробуйте позже.');
+          });
+        };
+
+        var s = document.createElement('script');
+        s.src = 'https://telegram.org/js/telegram-widget.js?22';
+        s.setAttribute('data-telegram-login', botUsername);
+        s.setAttribute('data-size', 'medium');
+        s.setAttribute('data-radius', '8');
+        s.setAttribute('data-onauth', 'onTelegramAuth(user)');
+        s.setAttribute('data-request-access', 'write');
+        container.appendChild(s);
+      }
+    }
+
+    async function init() {
+      try {
+        var data = await fetchEnv();
+        renderForm(data);
+      } catch (err) {
+        if (err.message.indexOf('401') !== -1 || err.message.indexOf('403') !== -1) {
+          showAuthScreen();
+          return;
+        }
+        document.getElementById('skeleton').style.display = 'none';
+        var form = document.getElementById('settings-form');
+        form.style.display = 'block';
+        form.innerHTML =
+          '<div class="s-section" style="animation-delay:0s;text-align:center;padding:40px 20px;">' +
+          '<div style="font-size:36px;color:var(--border);margin-bottom:12px;">⚠️</div>' +
+          '<div style="color:var(--hint);font-size:13px;line-height:1.6;">' +
+          'Не удалось загрузить настройки.<br>' +
+          '<span style="color:var(--text-secondary);">' + escHtml(err.message) + '</span>' +
+          '</div>' +
+          '<button class="s-btn s-btn--outline" style="margin-top:18px;max-width:200px;margin-left:auto;margin-right:auto;" onclick="location.reload()">Повторить</button>' +
+          '</div>';
+      }
+    }
+
+    init();
+
+  })();
+  </script>
+</body>
+</html>

@@ -337,28 +337,20 @@
       </div>
 
       <div class="detail-card admin-settings-card" id="admin-server-settings" hidden>
-        <div class="detail-label">Серверный BOT_TOKEN</div>
+        <div class="detail-label">⚙️ Настройки сервера (.env)</div>
         <p class="admin-settings-text">
-          Этот раздел меняет runtime-настройку самого сервера. Здесь можно обновить
-          Telegram API ключ бота без ручного редактирования <code>.env</code>.
-          После сохранения бот переподключится с новым токеном.
+          Полное управление всеми переменными окружения бэкенда: токен бота, платёжные шлюзы,
+          xRocket, Bitpapa, вебхук-секреты и другие параметры — в отдельном Mini App.
         </p>
 
-        <form id="admin-server-form" class="admin-settings-form" autocomplete="off">
-          <div class="admin-settings-grid">
-            <div class="field field--full">
-              <label class="field-label" for="admin-server-bot-token">BOT_TOKEN / API key бота</label>
-              <input class="input" id="admin-server-bot-token" type="password" placeholder="123456:ABC..." autocomplete="off">
-            </div>
-          </div>
-
-          <div class="settings-actions">
-            <button type="submit" class="btn btn--primary">Сохранить токен бота</button>
-            <button type="button" class="btn btn--outline" id="admin-server-refresh">Обновить статус</button>
-          </div>
-        </form>
-
         <div class="admin-runtime-meta" id="admin-server-runtime-meta"></div>
+
+        <div class="settings-actions">
+          <a href="settings.html" class="btn btn--primary" id="open-settings-app" style="text-decoration:none;text-align:center">
+            Открыть настройки сервера
+          </a>
+          <button type="button" class="btn btn--outline" id="admin-server-refresh">Обновить статус</button>
+        </div>
       </div>
 
       <div class="info-card" id="admin-server-note" hidden>

@@ -60,41 +60,129 @@ function normalizedSecret(value) {
   return v;
 }
 
-const RUNTIME_SETTINGS_FILE = path.join(__dirname, "runtime_settings.json");
-const DEFAULT_BOT_TOKEN = normalizedSecret(process.env.BOT_TOKEN);
-
-let runtimeSettings = {
-  botToken: DEFAULT_BOT_TOKEN,
-  updatedAt: DEFAULT_BOT_TOKEN ? Date.now() : 0
-};
-
-try {
-  const storedRuntime = JSON.parse(fs.readFileSync(RUNTIME_SETTINGS_FILE, "utf8"));
-  const storedBotToken = normalizedSecret(storedRuntime && storedRuntime.botToken);
-  if (storedBotToken) {
-    runtimeSettings = {
-      botToken: storedBotToken,
-      updatedAt: Number.isFinite(Number(storedRuntime.updatedAt)) ? Number(storedRuntime.updatedAt) : Date.now()
-    };
-  }
-} catch (e) {
-  // ignore missing runtime settings
-}
-
-function persistRuntimeSettings() {
-  try {
-    if (!runtimeSettings.botToken) {
-      if (fs.existsSync(RUNTIME_SETTINGS_FILE)) fs.unlinkSync(RUNTIME_SETTINGS_FILE);
-      return;
+function normalizeBotCommands(value) {
+  let commands = value;
+  if (typeof commands === "string") {
+    const raw = commands.trim();
+    if (!raw) commands = [];
+    else {
+      try {
+        commands = JSON.parse(raw);
+      } catch (e) {
+        commands = raw.split(/\r?\n/).map((line) => {
+          const trimmed = String(line || "").trim();
+          if (!trimmed) return null;
+          const parts = trimmed.split(/[\-|–|—]/);
+          const command = String(parts.shift() || "").trim().replace(/^\//, "");
+          const description = String(parts.join("-") || command).trim();
+          return command ? { command, description } : null;
+        }).filter(Boolean);
+      }
     }
-    fs.writeFileSync(RUNTIME_SETTINGS_FILE, JSON.stringify(runtimeSettings, null, 2));
-  } catch (e) {
-    console.error("[admin] Не удалось сохранить runtime_settings:", e.message);
   }
+  if (!Array.isArray(commands)) commands = [];
+  return commands
+    .map((item) => {
+      const command = String(item && item.command ? item.command : "").trim().replace(/^\//, "").slice(0, 32);
+      const description = String(item && item.description ? item.description : "").trim().slice(0, 256);
+      return command && description ? { command, description } : null;
+    })
+    .filter(Boolean);
 }
 
-function getBotToken() {
-  return runtimeSettings.botToken || "";
+function getDefaultBotCommands() {
+  return [
+    { command: "start", description: "Открыть CRB GA" },
+    { command: "app", description: "Кнопка запуска приложения" },
+    { command: "post", description: "Пост с кнопками на шаблоны сделок" },
+    { command: "deal", description: "Проверить сделку: /deal ID" },
+    { command: "support", description: "Поддержка" }
+  ];
+}
+
+function normalizeBotProfile(profile) {
+  const src = profile || {};
+  const shortDescription = String(src.shortDescription || src.short_description || "").trim() ||
+    "CRB GA — гарант безопасных сделок. Escrow, споры, арбитраж.";
+  const description = String(src.description || "").trim() ||
+    "CRB GA — гарант-сервис безопасных сделок.\n\n" +
+    "Средства покупателя блокируются у гаранта и выплачиваются продавцу только после подтверждения приёмки. Разногласия решает арбитр.\n\n" +
+    "Оплата: xRocket, Bitpapa, PGon, NicePay, RuKassa.";
+  const menuButtonText = String(src.menuButtonText || src.menu_button_text || "Открыть CRB GA").trim() || "Открыть CRB GA";
+  const menuButtonUrl = String(src.menuButtonUrl || src.menu_button_url || (PUBLIC_URL ? PUBLIC_URL + "/" : "")).trim();
+  const name = String(src.name || src.botName || src.bot_name || "").trim();
+  const commands = normalizeBotCommands(src.commands || src.commandsJson || src.commands_json);
+  return {
+    name: name.slice(0, 64),
+    shortDescription: shortDescription.slice(0, 120),
+    description: description.slice(0, 512),
+    menuButtonText: menuButtonText.slice(0, 64),
+    menuButtonUrl,
+    commands: commands.length ? commands : getDefaultBotCommands()
+  };
+}
+
+function normalizeBotCommands(value) {
+  let commands = value;
+  if (typeof commands === "string") {
+    const raw = commands.trim();
+    if (!raw) commands = [];
+    else {
+      try {
+        commands = JSON.parse(raw);
+      } catch (e) {
+        commands = raw.split(/\r?\n/).map((line) => {
+          const trimmed = String(line || "").trim();
+          if (!trimmed) return null;
+          const parts = trimmed.split(/[\-|–|—]/);
+          const command = String(parts.shift() || "").trim().replace(/^\//, "");
+          const description = String(parts.join("-") || command).trim();
+          return command ? { command, description } : null;
+        }).filter(Boolean);
+      }
+    }
+  }
+
+  if (!Array.isArray(commands)) commands = [];
+  return commands
+    .map((item) => {
+      const command = String(item && item.command ? item.command : "").trim().replace(/^\//, "").slice(0, 32);
+      const description = String(item && item.description ? item.description : "").trim().slice(0, 256);
+      return command && description ? { command, description } : null;
+    })
+    .filter(Boolean);
+}
+
+function getDefaultBotCommands() {
+  return [
+    { command: "start", description: "Открыть CRB GA" },
+    { command: "app", description: "Кнопка запуска приложения" },
+    { command: "post", description: "Пост с кнопками на шаблоны сделок" },
+    { command: "deal", description: "Проверить сделку: /deal ID" },
+    { command: "support", description: "Поддержка" }
+  ];
+}
+
+function normalizeBotProfile(profile) {
+  const src = profile || {};
+  const shortDescription = String(src.shortDescription || src.short_description || "").trim() ||
+    "CRB GA — гарант безопасных сделок. Escrow, споры, арбитраж.";
+  const description = String(src.description || "").trim() ||
+    "CRB GA — гарант-сервис безопасных сделок.\n\n" +
+    "Средства покупателя блокируются у гаранта и выплачиваются продавцу только после подтверждения приёмки. Разногласия решает арбитр.\n\n" +
+    "Оплата: xRocket, Bitpapa, PGon, NicePay, RuKassa.";
+  const menuButtonText = String(src.menuButtonText || src.menu_button_text || "Открыть CRB GA").trim() || "Открыть CRB GA";
+  const menuButtonUrl = String(src.menuButtonUrl || src.menu_button_url || (PUBLIC_URL ? PUBLIC_URL + "/" : "")).trim();
+  const name = String(src.name || src.botName || src.bot_name || "").trim();
+  const commands = normalizeBotCommands(src.commands || src.commandsJson || src.commands_json);
+  return {
+    name: name.slice(0, 64),
+    shortDescription: shortDescription.slice(0, 120),
+    description: description.slice(0, 512),
+    menuButtonText: menuButtonText.slice(0, 64),
+    menuButtonUrl: menuButtonUrl,
+    commands: commands.length ? commands : getDefaultBotCommands()
+  };
 }
 
 const XROCKET_API_KEY = process.env.XROCKET_API_KEY || "";
@@ -115,11 +203,73 @@ const RUKASSA_TOKEN = process.env.RUKASSA_TOKEN || "";
 // (укажите его при настройке webhook в кабинете шлюза: /webhook/rukassa?secret=...)
 const WEBHOOK_SECRET = normalizedSecret(process.env.WEBHOOK_SECRET);
 
+// Токен API Bitpapa для автопроверки входящих переводов
+const BITPAPA_API_TOKEN = process.env.BITPAPA_API_TOKEN || "";
+
 const ADMIN_IDS = (process.env.ADMIN_IDS || "")
   .split(",")
   .map((s) => parseInt(s.trim(), 10))
   .filter(Boolean);
 const ADMIN_GROUP_ID = parseInt(process.env.ADMIN_GROUP_ID || "", 10);
+
+const RUNTIME_SETTINGS_FILE = path.join(__dirname, "runtime_settings.json");
+const DEFAULT_BOT_TOKEN = normalizedSecret(process.env.BOT_TOKEN);
+const DEFAULT_BOT_PROFILE = normalizeBotProfile({
+  name: process.env.BOT_NAME,
+  shortDescription: process.env.BOT_SHORT_DESCRIPTION,
+  description: process.env.BOT_DESCRIPTION,
+  menuButtonText: process.env.BOT_MENU_BUTTON_TEXT,
+  menuButtonUrl: process.env.BOT_MENU_BUTTON_URL,
+  commandsJson: process.env.BOT_COMMANDS_JSON
+});
+
+let runtimeSettings = {
+  botToken: DEFAULT_BOT_TOKEN,
+  botProfile: normalizeBotProfile(DEFAULT_BOT_PROFILE),
+  updatedAt: DEFAULT_BOT_TOKEN ? Date.now() : 0
+};
+
+try {
+  const storedRuntime = JSON.parse(fs.readFileSync(RUNTIME_SETTINGS_FILE, "utf8"));
+  const storedBotToken = normalizedSecret(storedRuntime && storedRuntime.botToken);
+  if (storedBotToken) {
+    runtimeSettings = {
+      botToken: storedBotToken,
+      botProfile: normalizeBotProfile(storedRuntime.botProfile),
+      updatedAt: Number.isFinite(Number(storedRuntime.updatedAt)) ? Number(storedRuntime.updatedAt) : Date.now()
+    };
+  }
+} catch (e) {
+  // ignore missing runtime settings
+}
+
+function persistRuntimeSettings() {
+  try {
+    if (!runtimeSettings.botToken) {
+      if (fs.existsSync(RUNTIME_SETTINGS_FILE)) fs.unlinkSync(RUNTIME_SETTINGS_FILE);
+      return;
+    }
+    const payload = {
+      botToken: runtimeSettings.botToken,
+      botProfile: normalizeBotProfile(runtimeSettings.botProfile),
+      updatedAt: runtimeSettings.updatedAt || Date.now()
+    };
+    fs.writeFileSync(RUNTIME_SETTINGS_FILE, JSON.stringify(payload, null, 2));
+  } catch (e) {
+    console.error("[admin] Не удалось сохранить runtime_settings:", e.message);
+  }
+}
+
+function getBotToken() {
+  return runtimeSettings.botToken || "";
+}
+
+function getBotProfile() {
+  if (!runtimeSettings.botProfile) runtimeSettings.botProfile = normalizeBotProfile(DEFAULT_BOT_PROFILE);
+  return normalizeBotProfile(runtimeSettings.botProfile);
+}
+
+
 
 const DB_FILE = path.join(__dirname, "deals.json");
 const ADMIN_GROUP_FILE = path.join(__dirname, "admin_group.json");
@@ -471,8 +621,97 @@ const INVOICE_PROVIDERS = {
  * вручную через POST /api/deals/:id/mark-paid.
  */
 async function verifyBitpapaTransfer(deal) {
-  void deal;
+  if (!BITPAPA_API_TOKEN) return false;
+  try {
+    const res = await fetch("https://bitpapa.com/api/v1/transfers?type=incoming", {
+      method: "GET",
+      headers: {
+        "Authorization": "Bearer " + BITPAPA_API_TOKEN,
+        "Accept": "application/json"
+      }
+    });
+    if (!res.ok) {
+      console.error(`[bitpapa] Ошибка запроса к API Bitpapa: ${res.status}`);
+      return false;
+    }
+    const body = await res.json();
+    const transfers = body.transfers || body.data || [];
+    if (!Array.isArray(transfers)) return false;
+
+    for (const tx of transfers) {
+      const txAmount = parseFloat(tx.amount || tx.value);
+      const txCurrency = String(tx.currency || "").toUpperCase();
+      const txComment = String(tx.comment || tx.memo || tx.description || "");
+
+      const isAmountMatch = Math.abs(txAmount - deal.total) < 0.01;
+      const isCurrencyMatch = txCurrency === deal.currency.toUpperCase();
+      const isCommentMatch = txComment.includes(deal.id);
+
+      if (isAmountMatch && isCurrencyMatch && isCommentMatch) {
+        console.log(`[bitpapa] Сделка ${deal.id}: найден перевод от Bitpapa. ID транзакции: ${tx.id}`);
+        deal.bitpapaTxId = tx.id;
+        return true;
+      }
+    }
+  } catch (e) {
+    console.error(`[bitpapa] Ошибка при проверке перевода Bitpapa:`, e.message);
+  }
   return false;
+}
+
+// Автовыплата продавцу по завершенной сделке через xRocket Pay API
+async function payoutSeller(deal) {
+  const sellerId = deal.role === "seller" ? deal.ownerId : deal.counterpartyId;
+  if (!sellerId) {
+    console.warn(`[payout] Сделка ${deal.id}: не удалось выплатить продавцу, т.к. его Telegram ID не известен`);
+    notifyAdmins(`⚠️ Сделка <b>${deal.id}</b> завершена, но не удалось произвести автовыплату, так как Telegram ID продавца не найден. Требуется ручное вмешательство.`).catch(() => {});
+    return false;
+  }
+
+  if (deal.method !== "xrocket") {
+    console.log(`[payout] Сделка ${deal.id}: метод ${deal.method} требует ручной выплаты продавцу ID ${sellerId}`);
+    return false;
+  }
+
+  if (!XROCKET_API_KEY) {
+    console.warn(`[payout] Сделка ${deal.id}: xRocket API ключ не настроен для автовыплаты`);
+    return false;
+  }
+
+  try {
+    const currency = deal.currency === "USDT" ? "USDT" : deal.currency === "TON" ? "TONCOIN" : deal.currency;
+    const amount = deal.amount; // Выплата продавцу (без комиссии гаранта)
+
+    console.log(`[payout] Сделка ${deal.id}: инициация выплаты продавцу (ID: ${sellerId}) на сумму ${amount} ${currency}`);
+
+    const res = await fetch(XROCKET_API_URL + "/app/transfer", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Rocket-Pay-Key": XROCKET_API_KEY
+      },
+      body: JSON.stringify({
+        tgUserId: sellerId,
+        amount: amount,
+        currency: currency,
+        comment: `Выплата по сделке ${deal.id}: ${deal.title}`.slice(0, 500)
+      })
+    });
+
+    const body = await res.json();
+    if (!res.ok || !body.success) {
+      throw new Error("xRocket Transfer error: " + JSON.stringify(body));
+    }
+
+    console.log(`[payout] Сделка ${deal.id}: выплата успешно проведена. ID перевода: ${body.data.id}`);
+    deal.payoutId = body.data.id;
+    persist();
+    return true;
+  } catch (e) {
+    console.error(`[payout] Сделка ${deal.id}: ошибка при автовыплате:`, e.message);
+    notifyAdmins(`❌ Ошибка автовыплаты по сделке <b>${deal.id}</b> продавцу (ID: ${sellerId}):\n<code>${e.message}</code>`).catch(() => {});
+    return false;
+  }
 }
 
 /* ---------- Уведомления ---------- */
@@ -561,7 +800,7 @@ function isLocalRequest(req) {
 }
 
 function adminRuntimeAccess(req, res, next) {
-  if (!getBotToken() && isLocalRequest(req)) {
+  if (isLocalRequest(req)) {
     req.tgUser = { id: 0, first_name: "Local Admin", username: "local_admin" };
     return next();
   }
@@ -591,11 +830,14 @@ app.post("/api/auth/telegram", (req, res) => {
 
 function isParty(deal, user) {
   const uname = user.username ? "@" + String(user.username).toLowerCase() : null;
-  return (
-    deal.ownerId === user.id ||
-    deal.counterpartyId === user.id ||
-    (uname && String(deal.counterparty || "").toLowerCase() === uname)
-  );
+  if (deal.ownerId === user.id) return true;
+  if (deal.counterpartyId === user.id) return true;
+  if (uname && String(deal.counterparty || "").toLowerCase() === uname) {
+    deal.counterpartyId = user.id;
+    persist();
+    return true;
+  }
+  return false;
 }
 
 // Сделки текущего пользователя
@@ -688,9 +930,10 @@ app.post("/api/deals/:id/status", auth, (req, res) => {
     if (next === "dispute") notifyAdmins(`⚠️ Новый спор: <b>${deal.id}</b> «${deal.title}»\nСумма: ${deal.total} ${deal.currency}`).catch(() => {});
   }
   if (next === "completed") {
-    // Здесь инициируйте выплату продавцу (например, перевод через xRocket
-    // POST /app/transfer).
-    console.log(`[payout] Сделка ${deal.id}: выплатить продавцу ${deal.amount} ${deal.currency}`);
+    // Инициируем автовыплату продавцу через xRocket, если применимо
+    payoutSeller(deal).catch((err) => {
+      console.error(`[payout] Ошибка при автовыплате по сделке ${deal.id}:`, err);
+    });
   }
   res.json(deal);
 });
@@ -922,6 +1165,7 @@ async function getRuntimeSnapshot() {
       first_name: botInfo.first_name,
       can_join_groups: !!botInfo.can_join_groups
     } : null,
+    botProfile: getBotProfile(),
     adminGroup: {
       chatId: adminGroup.chatId,
       title: adminGroup.title || "",
@@ -931,6 +1175,83 @@ async function getRuntimeSnapshot() {
     },
     updatedAt: runtimeSettings.updatedAt || 0
   };
+}
+
+// --- Управление .env переменными ---
+
+const ENV_KEYS = [
+  "BOT_TOKEN", "BOT_NAME", "BOT_SHORT_DESCRIPTION", "BOT_DESCRIPTION",
+  "BOT_MENU_BUTTON_TEXT", "BOT_MENU_BUTTON_URL", "BOT_COMMANDS_JSON",
+  "ADMIN_IDS", "ADMIN_GROUP_ID",
+  "XROCKET_API_KEY", "XROCKET_API_URL",
+  "PGON_API_URL", "PGON_API_KEY",
+  "NICEPAY_MERCHANT_ID", "NICEPAY_SECRET",
+  "RUKASSA_SHOP_ID", "RUKASSA_TOKEN",
+  "BITPAPA_API_TOKEN",
+  "WEBHOOK_SECRET", "PUBLIC_URL",
+  "FEE_PERCENT", "PORT"
+];
+
+const SECRET_KEYS = new Set([
+  "BOT_TOKEN", "XROCKET_API_KEY", "PGON_API_KEY",
+  "NICEPAY_SECRET", "RUKASSA_TOKEN", "BITPAPA_API_TOKEN",
+  "WEBHOOK_SECRET"
+]);
+
+function getEnvSnapshot() {
+  const result = {};
+  for (const key of ENV_KEYS) {
+    const raw = (process.env[key] || "").trim();
+    const isMasked = SECRET_KEYS.has(key);
+    result[key] = {
+      value: isMasked ? maskSecret(raw) : raw,
+      masked: isMasked,
+      configured: !!raw && raw !== "replace-me"
+    };
+  }
+  return result;
+}
+
+function readEnvFile() {
+  try {
+    return fs.readFileSync(path.join(__dirname, ".env"), "utf8");
+  } catch (e) {
+    return "";
+  }
+}
+
+function writeEnvFile(content) {
+  fs.writeFileSync(path.join(__dirname, ".env"), content, "utf8");
+}
+
+/**
+ * Обновляет .env файл: читает, меняет указанные ключи, сохраняет.
+ * Комментарии и структура сохраняются.
+ */
+function updateEnvFile(updates) {
+  const raw = readEnvFile();
+  const lines = raw.split(/\r?\n/);
+  const remaining = { ...updates };
+
+  // Обновляем существующие строки
+  for (let i = 0; i < lines.length; i++) {
+    const trimmed = lines[i].trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const eq = trimmed.indexOf("=");
+    if (eq <= 0) continue;
+    const key = trimmed.slice(0, eq).trim();
+    if (key in remaining) {
+      lines[i] = key + "=" + remaining[key];
+      delete remaining[key];
+    }
+  }
+
+  // Добавляем новые ключи, которых не было в файле
+  for (const [key, val] of Object.entries(remaining)) {
+    lines.push(key + "=" + val);
+  }
+
+  writeEnvFile(lines.join("\n"));
 }
 
 async function ensureBotRuntime() {
@@ -957,7 +1278,9 @@ app.get("/api/admin/search", auth, adminOnly, (req, res) => {
 });
 
 app.get("/api/admin/runtime", adminRuntimeAccess, async (req, res) => {
-  res.json(await getRuntimeSnapshot());
+  const snapshot = await getRuntimeSnapshot();
+  snapshot.env = getEnvSnapshot();
+  res.json(snapshot);
 });
 
 app.post("/api/admin/runtime", adminRuntimeAccess, async (req, res) => {
@@ -973,6 +1296,7 @@ app.post("/api/admin/runtime", adminRuntimeAccess, async (req, res) => {
 
   runtimeSettings = {
     botToken: nextToken,
+    botProfile: runtimeSettings.botProfile || DEFAULT_BOT_PROFILE,
     updatedAt: Date.now()
   };
   persistRuntimeSettings();
@@ -985,6 +1309,95 @@ app.post("/api/admin/runtime", adminRuntimeAccess, async (req, res) => {
   }
 
   res.json(await getRuntimeSnapshot());
+});
+
+// Админ: чтение всех .env переменных
+app.get("/api/admin/env", adminRuntimeAccess, (req, res) => {
+  res.json({ env: getEnvSnapshot() });
+});
+
+// Админ: запись .env переменных
+app.post("/api/admin/env", adminRuntimeAccess, async (req, res) => {
+  const body = req.body;
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return res.status(400).json({ error: "Ожидается JSON-объект с ключами для обновления" });
+  }
+
+  // Фильтруем: принимаем только известные ключи
+  const updates = {};
+  for (const key of ENV_KEYS) {
+    if (key in body) {
+      updates[key] = String(body[key] ?? "").trim();
+    }
+  }
+
+  if (Object.keys(updates).length === 0) {
+    return res.status(400).json({ error: "Нет известных ключей для обновления" });
+  }
+
+  // Валидация BOT_TOKEN через Telegram API
+  if ("BOT_TOKEN" in updates) {
+    const nextToken = normalizedSecret(updates.BOT_TOKEN);
+    if (nextToken) {
+      const me = await tgCallWithToken(nextToken, "getMe");
+      if (!me || !me.ok || !me.result) {
+        return res.status(400).json({ error: "Telegram отклонил BOT_TOKEN. Проверьте токен и повторите попытку." });
+      }
+      BOT_INFO = me.result;
+    }
+  }
+
+  const profileKeys = [
+    "BOT_NAME",
+    "BOT_SHORT_DESCRIPTION",
+    "BOT_DESCRIPTION",
+    "BOT_MENU_BUTTON_TEXT",
+    "BOT_MENU_BUTTON_URL",
+    "BOT_COMMANDS_JSON"
+  ];
+  const hasProfileUpdates = profileKeys.some((key) => key in updates);
+  if (hasProfileUpdates) {
+    const currentProfile = getBotProfile();
+    runtimeSettings.botProfile = normalizeBotProfile({
+      name: updates.BOT_NAME != null ? updates.BOT_NAME : currentProfile.name,
+      shortDescription: updates.BOT_SHORT_DESCRIPTION != null ? updates.BOT_SHORT_DESCRIPTION : currentProfile.shortDescription,
+      description: updates.BOT_DESCRIPTION != null ? updates.BOT_DESCRIPTION : currentProfile.description,
+      menuButtonText: updates.BOT_MENU_BUTTON_TEXT != null ? updates.BOT_MENU_BUTTON_TEXT : currentProfile.menuButtonText,
+      menuButtonUrl: updates.BOT_MENU_BUTTON_URL != null ? updates.BOT_MENU_BUTTON_URL : currentProfile.menuButtonUrl,
+      commandsJson: updates.BOT_COMMANDS_JSON != null ? updates.BOT_COMMANDS_JSON : currentProfile.commands
+    });
+  }
+
+  // Записываем изменения в .env файл
+  try {
+    updateEnvFile(updates);
+  } catch (e) {
+    console.error("[admin] Не удалось записать .env:", e.message);
+    return res.status(500).json({ error: "Не удалось сохранить .env файл" });
+  }
+
+  // Обновляем process.env
+  for (const [key, val] of Object.entries(updates)) {
+    process.env[key] = val;
+  }
+
+  // Перезапуск бота при смене BOT_TOKEN
+  if ("BOT_TOKEN" in updates || hasProfileUpdates) {
+    const nextToken = normalizedSecret(updates.BOT_TOKEN);
+    runtimeSettings = {
+      botToken: nextToken || runtimeSettings.botToken,
+      botProfile: runtimeSettings.botProfile || DEFAULT_BOT_PROFILE,
+      updatedAt: Date.now()
+    };
+    persistRuntimeSettings();
+    try {
+      await ensureBotRuntime();
+    } catch (e) {
+      console.error("[admin] setup bot runtime:", e.message);
+    }
+  }
+
+  res.json({ env: getEnvSnapshot() });
 });
 
 // Админ: решение спора — "seller" (выплата продавцу) или "buyer" (возврат покупателю)
@@ -1069,6 +1482,40 @@ function gatewayWebhook(provider) {
     const dealId = b.order_id || b.orderId || b.merchant_order_id || b.payload;
     const deal = dealId && findDeal(String(dealId));
     if (!deal) return res.status(404).json({ error: "Сделка не найдена" });
+
+    // Сверка подписи NicePay
+    if (provider === "nicepay" && NICEPAY_SECRET) {
+      const sign = b.signature || b.sign || b.hash;
+      if (sign) {
+        const amountStr = String(b.amount ?? b.sum ?? b.value);
+        const expectedSignMd5 = crypto.createHash("md5")
+          .update(`${NICEPAY_MERCHANT_ID}${NICEPAY_SECRET}${amountStr}${deal.id}`)
+          .digest("hex");
+        const expectedSignSha256 = crypto.createHash("sha256")
+          .update(`${NICEPAY_MERCHANT_ID}${amountStr}${deal.id}${NICEPAY_SECRET}`)
+          .digest("hex");
+        const received = String(sign).toLowerCase();
+        if (received !== expectedSignMd5 && received !== expectedSignSha256) {
+          console.warn(`[nicepay] Неверная подпись вебхука: получено ${received}`);
+          return res.status(401).json({ error: "Неверная подпись NicePay" });
+        }
+      }
+    }
+
+    // Сверка подписи RuKassa
+    if (provider === "rukassa" && RUKASSA_TOKEN) {
+      const sign = b.signature || b.sign;
+      if (sign) {
+        const amountStr = String(b.amount ?? b.sum ?? b.value);
+        const expectedSign = crypto.createHash("md5")
+          .update(`${RUKASSA_SHOP_ID}${amountStr}${deal.id}${RUKASSA_TOKEN}`)
+          .digest("hex");
+        if (String(sign).toLowerCase() !== expectedSign) {
+          console.warn(`[rukassa] Неверная подпись вебхука: получено ${sign}`);
+          return res.status(401).json({ error: "Неверная подпись RuKassa" });
+        }
+      }
+    }
 
     const paidAmount = parseFloat(b.amount ?? b.sum ?? b.value);
     if (isFinite(paidAmount) && paidAmount + 1e-9 < deal.total) {
@@ -1160,27 +1607,22 @@ function createDealFromTemplate(template, buyer) {
 
 // Разовая настройка бота: описание, команды, админ-команды
 async function setupBot() {
+  const profile = getBotProfile();
   const me = await tgCall("getMe");
   if (me && me.ok) BOT_INFO = me.result;
 
+  if (profile.name) {
+    await tgCall("setMyName", { name: profile.name });
+  }
+
   await tgCall("setMyShortDescription", {
-    short_description: "CRB GA — гарант безопасных сделок. Escrow, споры, арбитраж."
+    short_description: profile.shortDescription
   });
   await tgCall("setMyDescription", {
-    description:
-      "CRB GA — гарант-сервис безопасных сделок.\n\n" +
-      "Средства покупателя блокируются у гаранта и выплачиваются продавцу " +
-      "только после подтверждения приёмки. Разногласия решает арбитр.\n\n" +
-      "Оплата: xRocket, Bitpapa, PGon, NicePay, RuKassa."
+    description: profile.description
   });
   await tgCall("setMyCommands", {
-    commands: [
-      { command: "start", description: "Открыть CRB GA" },
-      { command: "app", description: "Кнопка запуска приложения" },
-      { command: "post", description: "Пост с кнопками на шаблоны сделок" },
-      { command: "deal", description: "Проверить сделку: /deal ID" },
-      { command: "support", description: "Поддержка" }
-    ]
+    commands: profile.commands
   });
   for (const adminId of ADMIN_IDS) {
     await tgCall("setMyCommands", {
@@ -1194,6 +1636,11 @@ async function setupBot() {
         { command: "deal", description: "Проверить сделку: /deal ID" },
         { command: "support", description: "Поддержка" }
       ]
+    });
+  }
+  if (profile.menuButtonUrl) {
+    await tgCall("setChatMenuButton", {
+      menu_button: { type: "web_app", text: profile.menuButtonText, web_app: { url: profile.menuButtonUrl } }
     });
   }
   console.log("[bot] Команды и описание настроены");

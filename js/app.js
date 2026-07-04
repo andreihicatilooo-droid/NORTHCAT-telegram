@@ -15,6 +15,11 @@
   var API_BASE = "";
   var apiAvailable = false;
 
+  function isLocalHost() {
+    var host = window.location.hostname;
+    return host === "127.0.0.1" || host === "localhost";
+  }
+
   function cloneValue(value) {
     if (value == null) return {};
     return JSON.parse(JSON.stringify(value));
@@ -87,13 +92,46 @@
     if (!METHODS.length) METHODS = normalizePayMethods(DEFAULT_CFG.PAY_METHODS || []);
   }
 
+  function checkApiHealth(base) {
+    return fetch(base + "/api/health", { method: "GET" })
+      .then(function (r) { return !!r.ok; })
+      .catch(function () { return false; });
+  }
+
   function resolveApi() {
     var raw = normalizeApiUrl(CFG.API_URL);
+    var candidates = [];
+    var host;
+
     if (!raw) return Promise.resolve(false);
-    API_BASE = raw === "auto" ? "" : raw;
-    return fetch(API_BASE + "/api/health", { method: "GET" })
-      .then(function (r) { return r.ok; })
-      .catch(function () { return false; });
+
+    if (raw === "auto") {
+      if (isLocalHost() && window.location.port !== "3001") {
+        host = window.location.hostname || "127.0.0.1";
+        candidates.push(window.location.protocol + "//" + host + ":3001");
+      }
+      candidates.push("");
+    } else {
+      candidates.push(raw);
+    }
+
+    function tryNext(index) {
+      if (index >= candidates.length) {
+        API_BASE = raw === "auto" ? "" : raw;
+        return false;
+      }
+
+      var candidate = candidates[index];
+      return checkApiHealth(candidate).then(function (ok) {
+        if (ok) {
+          API_BASE = candidate;
+          return true;
+        }
+        return tryNext(index + 1);
+      });
+    }
+
+    return tryNext(0);
   }
 
   // Демо-режим: бэкенда нет или пользователь вошёл как гость
@@ -894,11 +932,6 @@
 
   var isAdmin = false;
 
-  function isLocalHost() {
-    var host = window.location.hostname;
-    return host === "127.0.0.1" || host === "localhost";
-  }
-
   function hasRuntimeOverrides() {
     return Object.keys(getStoredSettings()).length > 0;
   }
@@ -1358,21 +1391,8 @@
     });
   });
 
-  $("admin-server-form").addEventListener("submit", function (e) {
-    e.preventDefault();
-    var token = $("admin-server-bot-token").value.trim();
-    if (!token) {
-      showAlert("Введите BOT_TOKEN / API key бота.");
-      return;
-    }
-    api("POST", "/api/admin/runtime", { botToken: token }).then(function (res) {
-      $("admin-server-bot-token").value = "";
-      renderAdminServerRuntimeMeta(res);
-      if (window.showToast) window.showToast("Токен бота обновлён.");
-    }).catch(function () {
-      showAlert("Не удалось сохранить токен бота. Проверьте ключ и повторите попытку.");
-    });
-  });
+
+
 
   $("admin-search-form").addEventListener("submit", function (e) {
     e.preventDefault();
