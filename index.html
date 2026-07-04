@@ -8,6 +8,13 @@
   <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
+  <div class="shader-stage" aria-hidden="true">
+    <canvas class="shader-canvas" id="shader-canvas"></canvas>
+    <div class="shader-grid"></div>
+    <div class="shader-noise"></div>
+    <div class="shader-glow shader-glow--one"></div>
+    <div class="shader-glow shader-glow--two"></div>
+  </div>
   <div id="app">
 
     <!-- Экран авторизации (вне Telegram) -->
@@ -16,6 +23,7 @@
         <div class="auth-logo">CRB GA</div>
         <div class="auth-tagline">Гарант-сервис безопасных сделок</div>
         <div class="auth-divider"></div>
+        <button class="btn btn--primary" id="open-tg-bot" style="width: 100%; margin-bottom: 12px; display: none;">Войти через Telegram-бота</button>
         <div class="auth-widget" id="tg-login-widget"></div>
         <button class="btn btn--outline" id="guest-login">Продолжить в демо-режиме</button>
         <p class="auth-hint">Полный доступ — при входе через Telegram или запуске Mini App внутри бота.</p>
@@ -35,11 +43,56 @@
     </header>
 
     <!-- Экран: список сделок -->
-    <main class="screen screen--active" id="screen-deals">
+    <main class="screen screen--active" id="screen-deals" data-scene="deals">
       <div class="screen-head">
         <h2 class="screen-title">Сделки</h2>
         <button class="btn btn--primary btn--small" id="new-deal-button">Новая сделка</button>
       </div>
+
+      <section class="hero-panel" id="hero-panel">
+        <div class="hero-panel__glint" aria-hidden="true"></div>
+        <div class="hero-panel__top">
+          <div class="hero-badges">
+            <span class="hero-badge" id="hero-kicker">Shader interface</span>
+            <span class="hero-badge hero-badge--live" id="hero-runtime-state">Подключение...</span>
+          </div>
+          <button class="btn btn--primary btn--small hero-cta" id="hero-create-button" type="button">Новая сделка</button>
+        </div>
+
+        <div class="hero-panel__body">
+          <div class="hero-copy">
+            <h3 class="hero-title">Escrow cockpit для быстрых сделок</h3>
+            <p class="hero-subtitle" id="hero-activity-text">
+              Отслеживайте активные кейсы, спорные сценарии и запускайте новые сделки
+              из одного интерактивного интерфейса.
+            </p>
+          </div>
+
+          <div class="hero-orbit" aria-hidden="true">
+            <div class="hero-orbit-ring hero-orbit-ring--outer"></div>
+            <div class="hero-orbit-ring hero-orbit-ring--inner"></div>
+            <div class="hero-orbit-core"></div>
+          </div>
+        </div>
+
+        <div class="hero-stats">
+          <div class="hero-stat">
+            <span class="hero-stat-label">Активные</span>
+            <strong id="hero-active-count">0</strong>
+            <span class="hero-stat-note">В работе сейчас</span>
+          </div>
+          <div class="hero-stat">
+            <span class="hero-stat-label">Завершены</span>
+            <strong id="hero-completed-count">0</strong>
+            <span class="hero-stat-note">Подтвержденные кейсы</span>
+          </div>
+          <div class="hero-stat">
+            <span class="hero-stat-label">Споры</span>
+            <strong id="hero-dispute-count">0</strong>
+            <span class="hero-stat-note">Требуют внимания</span>
+          </div>
+        </div>
+      </section>
 
       <div class="filter-row" id="filter-row">
         <button class="chip chip--active" data-filter="all">Все</button>
@@ -57,7 +110,7 @@
     </main>
 
     <!-- Экран: создание сделки -->
-    <main class="screen" id="screen-create">
+    <main class="screen" id="screen-create" data-scene="create">
       <h2 class="screen-title">Новая сделка</h2>
       <p class="screen-subtitle">Средства покупателя блокируются у гаранта и выплачиваются продавцу после подтверждения приёмки.</p>
 
@@ -118,7 +171,7 @@
     </main>
 
     <!-- Экран: сделка -->
-    <main class="screen" id="screen-deal">
+    <main class="screen" id="screen-deal" data-scene="deal">
       <div class="deal-header">
         <h2 class="screen-title" id="deal-view-title">Сделка</h2>
         <span class="status-chip" id="deal-view-status">—</span>
@@ -146,7 +199,7 @@
     </main>
 
     <!-- Экран: профиль -->
-    <main class="screen" id="screen-profile">
+    <main class="screen" id="screen-profile" data-scene="profile">
       <h2 class="screen-title">Профиль</h2>
       <div class="profile-card">
         <div class="avatar avatar--big" id="profile-avatar">GA</div>
@@ -317,6 +370,7 @@
   </div>
   <script src="js/config.js"></script>
   <script src="js/app.js"></script>
+  <script src="js/shader.js"></script>
   <script src="js/ui.js"></script>
 </body>
 </html>

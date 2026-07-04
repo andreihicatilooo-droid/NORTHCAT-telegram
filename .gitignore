@@ -8,3 +8,4 @@ backend/user_chats.json
 backend/port.tmp
 *.log
 *.tmp
+backend/server.log

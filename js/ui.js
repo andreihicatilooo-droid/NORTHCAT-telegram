@@ -112,4 +112,88 @@
     });
   });
 
+  /* ---- Spotlight / tilt на карточках ---- */
+  var appRoot = document.getElementById("app");
+  var finePointer = window.matchMedia && window.matchMedia("(pointer: fine)").matches;
+  var interactiveSelector = [
+    ".hero-panel",
+    ".deal-item",
+    ".detail-card",
+    ".profile-card",
+    ".stat-card",
+    ".info-card",
+    ".guide-step",
+    ".guide-panel",
+    ".guide-tip",
+    ".fee-card",
+    ".pay-method-card"
+  ].join(", ");
+
+  function updateCardPointer(card, x, y) {
+    var rect = card.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
+    var px = (x - rect.left) / rect.width;
+    var py = (y - rect.top) / rect.height;
+    card.style.setProperty("--spotlight-x", (px * 100).toFixed(2) + "%");
+    card.style.setProperty("--spotlight-y", (py * 100).toFixed(2) + "%");
+    if (finePointer) {
+      card.style.setProperty("--card-rotate-x", ((0.5 - py) * 8).toFixed(2) + "deg");
+      card.style.setProperty("--card-rotate-y", ((px - 0.5) * 10).toFixed(2) + "deg");
+    }
+  }
+
+  function resetCardPointer(card) {
+    card.classList.remove("is-tilting");
+    card.style.removeProperty("--card-rotate-x");
+    card.style.removeProperty("--card-rotate-y");
+    card.style.removeProperty("--spotlight-x");
+    card.style.removeProperty("--spotlight-y");
+  }
+
+  function bindInteractiveCard(card) {
+    if (!card || card.dataset.ambientBound === "1") return;
+    card.dataset.ambientBound = "1";
+
+    card.addEventListener("pointermove", function (e) {
+      updateCardPointer(card, e.clientX, e.clientY);
+      if (finePointer) card.classList.add("is-tilting");
+    });
+
+    card.addEventListener("pointerdown", function (e) {
+      updateCardPointer(card, e.clientX, e.clientY);
+    });
+
+    card.addEventListener("pointerleave", function () {
+      resetCardPointer(card);
+    });
+  }
+
+  function bindInteractiveCards(root) {
+    (root || document).querySelectorAll(interactiveSelector).forEach(bindInteractiveCard);
+  }
+
+  function syncScreenState(screenId) {
+    var activeId = screenId || "";
+    if (!activeId) {
+      var activeScreen = document.querySelector(".screen--active");
+      activeId = activeScreen ? activeScreen.id : "screen-deals";
+    }
+    document.body.setAttribute("data-screen", activeId);
+    if (appRoot) appRoot.setAttribute("data-screen", activeId);
+    requestAnimationFrame(updateIndicator);
+  }
+
+  bindInteractiveCards(document);
+  syncScreenState();
+
+  if (appRoot) {
+    new MutationObserver(function () {
+      bindInteractiveCards(appRoot);
+    }).observe(appRoot, { childList: true, subtree: true });
+  }
+
+  window.addEventListener("northcat:screenchange", function (event) {
+    syncScreenState(event && event.detail && event.detail.screen);
+  });
+
 }());

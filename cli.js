@@ -45,10 +45,22 @@ function clearScreen() {
 function getPIDByPort(port) {
   try {
     const output = execSync(`lsof -t -i:${port}`, { stdio: ['pipe', 'pipe', 'ignore'] });
-    return output.toString().trim();
+    return output.toString().trim().split('\n')[0];
   } catch (e) {
     return null;
   }
+}
+
+function getPIDStats(pid) {
+  if (!pid) return { cpu: '0.0', mem: '0.0' };
+  try {
+    const output = execSync(`ps -p ${pid} -o %cpu,%mem --no-headers`, { stdio: ['pipe', 'pipe', 'ignore'] });
+    const parts = output.toString().trim().split(/\s+/);
+    if (parts.length >= 2) {
+      return { cpu: parts[0], mem: parts[1] };
+    }
+  } catch (e) {}
+  return { cpu: '0.0', mem: '0.0' };
 }
 
 function loadConfig() {
@@ -122,9 +134,14 @@ function renderDashboard() {
   const statusStr = pid 
     ? `${colors.fgGreen}${colors.bright}РАБОТАЕТ (PID: ${pid})${colors.reset}` 
     : `${colors.fgRed}${colors.bright}ОСТАНОВЛЕН${colors.reset}`;
+  
+  const pidStats = getPIDStats(pid);
 
   console.log(`${colors.bright}--- СТАТУС СЕРВЕРА ---${colors.reset}`);
   console.log(`Статус:        ${statusStr}`);
+  if (pid) {
+    console.log(`Нагрузка:      CPU: ${colors.fgYellow}${pidStats.cpu}%${colors.reset} | RAM: ${colors.fgYellow}${pidStats.mem}%${colors.reset}`);
+  }
   console.log(`Порт:          ${colors.fgCyan}${cfg.port}${colors.reset}`);
   console.log(`URL Mini App:  ${colors.fgCyan}http://127.0.0.1:${cfg.port}/${colors.reset}`);
   console.log(`Настройки:     ${colors.fgCyan}http://127.0.0.1:${cfg.port}/settings.html${colors.reset}`);
@@ -270,6 +287,140 @@ function stopServerAndExit() {
   process.exit(0);
 }
 
+function clearLogs() {
+  clearScreen();
+  printHeader();
+  if (fs.existsSync(LOG_FILE)) {
+    fs.writeFileSync(LOG_FILE, '');
+    console.log(`${colors.fgGreen}Файл логов успешно очищен!${colors.reset}`);
+  } else {
+    console.log('Файл логов не существует.');
+  }
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  rl.question('\nНажмите Enter для возврата в меню...', () => {
+    rl.close();
+    mainMenu();
+  });
+}
+
+function liveDashboard() {
+  const interval = setInterval(() => {
+    renderDashboard();
+    console.log(`\n${colors.dim}Режим Live-мониторинга. Обновление каждую секунду... Нажмите Enter для выхода.${colors.reset}`);
+  }, 1000);
+  
+  // Вызываем сразу, чтобы не ждать секунду
+  renderDashboard();
+  console.log(`\n${colors.dim}Режим Live-мониторинга. Обновление каждую секунду... Нажмите Enter для выхода.${colors.reset}`);
+
+  const cleanExit = () => {
+    clearInterval(interval);
+    process.stdin.removeListener('data', onKey);
+    process.stdin.setRawMode(false);
+    mainMenu();
+  };
+
+  const onKey = (key) => {
+    if (key.toString() === '\u0003' || key.toString() === '\r' || key.toString() === '\n') { // Ctrl+C or Enter
+      cleanExit();
+    }
+  };
+
+  process.stdin.setRawMode(true);
+  process.stdin.resume();
+  process.stdin.on('data', onKey);
+}
+
+function openInBrowser(urlPath) {
+  const cfg = loadConfig();
+  const url = `http://127.0.0.1:${cfg.port}${urlPath}`;
+  console.log(`\nОткрываем в браузере: ${url}`);
+  try {
+    if (process.platform === 'win32') execSync(`start "" "${url}"`);
+    else if (process.platform === 'darwin') execSync(`open "${url}"`);
+    else execSync(`xdg-open "${url}" > /dev/null 2>&1`);
+  } catch (e) {
+    console.log(`${colors.fgRed}Не удалось автоматически открыть браузер. Перейдите по ссылке вручную:${colors.reset} ${url}`);
+  }
+  setTimeout(mainMenu, 2000);
+}
+
+function createTunnelCLI() {
+  const cfg = loadConfig();
+  console.log(`\n${colors.fgYellow}Запускаем Cloudflare Tunnel на порту ${cfg.port}...${colors.reset}`);
+  console.log(`Пожалуйста, подождите, получаем URL...`);
+  
+  const isWin = process.platform === 'win32';
+  const cmd = isWin ? 'npx.cmd' : 'npx';
+  const lt = spawn(cmd, ['--yes', 'cloudflared', 'tunnel', '--url', `http://localhost:${cfg.port}`]);
+  
+  let urlFound = false;
+  
+  const parseData = (data) => {
+    const output = data.toString();
+    const match = output.match(/(https:\/\/[a-z0-9-]+\.trycloudflare\.com)/);
+    if (match && !urlFound) {
+      urlFound = true;
+      const url = match[1];
+      console.log(`${colors.fgGreen}✅ Туннель успешно создан: ${colors.bright}${url}${colors.reset}`);
+      
+      const envPath = path.join(__dirname, 'backend', '.env');
+      let env = fs.existsSync(envPath) ? fs.readFileSync(envPath, 'utf8') : '';
+      if (env.includes("PUBLIC_URL=")) env = env.replace(/PUBLIC_URL=.*/, `PUBLIC_URL=${url}`);
+      else env += `\nPUBLIC_URL=${url}`;
+      
+      if (env.includes("BOT_MENU_BUTTON_URL=")) env = env.replace(/BOT_MENU_BUTTON_URL=.*/, `BOT_MENU_BUTTON_URL=${url}`);
+      else env += `\nBOT_MENU_BUTTON_URL=${url}`;
+      
+      fs.writeFileSync(envPath, env);
+      console.log(`${colors.fgGreen}Файл .env обновлен (PUBLIC_URL и BOT_MENU_BUTTON_URL).${colors.reset}`);
+      
+      const pid = getPIDByPort(cfg.port);
+      if (pid) {
+        console.log(`${colors.fgYellow}Авто-перезапуск сервера для применения нового туннеля Cloudflare...${colors.reset}`);
+        try {
+          execSync(`kill -9 ${pid}`);
+          const logStream = fs.openSync(LOG_FILE, 'a');
+          fs.appendFileSync(LOG_FILE, `\n[CLI] Авто-перезапуск сервера после обновления туннеля Cloudflare...\n`);
+          const server = spawn('node', [path.join(__dirname, 'backend', 'server.js')], {
+            detached: true,
+            stdio: ['ignore', logStream, logStream]
+          });
+          server.unref();
+          console.log(`${colors.fgGreen}Сервер успешно перезапущен с новым туннелем!${colors.reset}`);
+        } catch (e) {
+          console.log(`${colors.fgRed}Не удалось автоматически перезапустить сервер: ${e.message}${colors.reset}`);
+        }
+      } else {
+        console.log(`${colors.fgYellow}Сервер не запущен. Новый туннель применится при следующем запуске.${colors.reset}`);
+      }
+      console.log('');
+      
+      lt.unref();
+      waitForInput();
+    }
+  };
+
+  lt.stdout.on('data', parseData);
+  lt.stderr.on('data', parseData);
+
+  setTimeout(() => {
+    if (!urlFound) {
+      console.log(`${colors.fgRed}Таймаут получения URL туннеля.${colors.reset}\n`);
+      lt.kill();
+      waitForInput();
+    }
+  }, 7000);
+}
+
+function waitForInput() {
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  rl.question('Нажмите Enter для возврата в главное меню...', () => {
+    rl.close();
+    mainMenu();
+  });
+}
+
 function mainMenu() {
   renderDashboard();
 
@@ -278,7 +429,12 @@ function mainMenu() {
   console.log(`[2] Показать список сделок`);
   console.log(`[3] Перезапустить сервер`);
   console.log(`[4] Остановить сервер и выйти`);
-  console.log(`[5] Выйти из консоли (оставив сервер в фоне)`);
+  console.log(`[5] Очистить логи сервера`);
+  console.log(`[6] Live-мониторинг (автообновление)`);
+  console.log(`[7] 📱 Открыть Mini App в браузере`);
+  console.log(`[8] ⚙️ Открыть Настройки в браузере`);
+  console.log(`[9] 🔗 Создать Публичный Туннель (localtunnel)`);
+  console.log(`[0] Выйти из консоли (оставив сервер в фоне)`);
   console.log('');
 
   const rl = readline.createInterface({
@@ -302,6 +458,21 @@ function mainMenu() {
         stopServerAndExit();
         break;
       case '5':
+        clearLogs();
+        break;
+      case '6':
+        liveDashboard();
+        break;
+      case '7':
+        openInBrowser('/');
+        break;
+      case '8':
+        openInBrowser('/settings.html');
+        break;
+      case '9':
+        createTunnelCLI();
+        break;
+      case '0':
         clearScreen();
         console.log('Консольное меню закрыто. Сервер продолжает работу в фоновом режиме.');
         process.exit(0);
