@@ -370,7 +370,27 @@ function createTunnelCLI() {
       
       fs.writeFileSync(envPath, env);
       console.log(`${colors.fgGreen}Файл .env обновлен (PUBLIC_URL и BOT_MENU_BUTTON_URL).${colors.reset}`);
-      console.log(`${colors.fgYellow}Рекомендуется перезапустить сервер, чтобы применить изменения.${colors.reset}\n`);
+      
+      const pid = getPIDByPort(cfg.port);
+      if (pid) {
+        console.log(`${colors.fgYellow}Авто-перезапуск сервера для применения нового туннеля Cloudflare...${colors.reset}`);
+        try {
+          execSync(`kill -9 ${pid}`);
+          const logStream = fs.openSync(LOG_FILE, 'a');
+          fs.appendFileSync(LOG_FILE, `\n[CLI] Авто-перезапуск сервера после обновления туннеля Cloudflare...\n`);
+          const server = spawn('node', [path.join(__dirname, 'backend', 'server.js')], {
+            detached: true,
+            stdio: ['ignore', logStream, logStream]
+          });
+          server.unref();
+          console.log(`${colors.fgGreen}Сервер успешно перезапущен с новым туннелем!${colors.reset}`);
+        } catch (e) {
+          console.log(`${colors.fgRed}Не удалось автоматически перезапустить сервер: ${e.message}${colors.reset}`);
+        }
+      } else {
+        console.log(`${colors.fgYellow}Сервер не запущен. Новый туннель применится при следующем запуске.${colors.reset}`);
+      }
+      console.log('');
       
       lt.unref();
       waitForInput();

@@ -252,6 +252,24 @@ app.post('/api/tunnel', (req, res) => {
       else env += `\nBOT_MENU_BUTTON_URL=${tunnelUrl}`;
       
       fs.writeFileSync(ENV_FILE, env);
+
+      // Auto-restart server if running to apply new tunnel URL
+      const pid = getMainPID();
+      if (pid) {
+        try {
+          execSync(`kill -9 ${pid}`);
+          const out = fs.openSync(LOG_FILE, 'a');
+          const err = fs.openSync(LOG_FILE, 'a');
+          fs.appendFileSync(LOG_FILE, `\n[LAUNCHER] Авто-перезапуск сервера после обновления туннеля Cloudflare...\n`);
+          const server = spawn('node', [SERVER_JS], {
+            detached: true,
+            stdio: ['ignore', out, err]
+          });
+          server.unref();
+        } catch (e) {
+          console.error("Auto-restart failed:", e.message);
+        }
+      }
     }
   };
 

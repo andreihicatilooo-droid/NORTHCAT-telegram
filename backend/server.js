@@ -211,8 +211,15 @@ function getBotToken() {
 }
 
 function getBotProfile() {
-  if (!runtimeSettings.botProfile) runtimeSettings.botProfile = normalizeBotProfile(DEFAULT_BOT_PROFILE);
-  return normalizeBotProfile(runtimeSettings.botProfile);
+  const stored = runtimeSettings.botProfile || {};
+  return normalizeBotProfile({
+    name: stored.name || process.env.BOT_NAME,
+    shortDescription: stored.shortDescription || process.env.BOT_SHORT_DESCRIPTION,
+    description: stored.description || process.env.BOT_DESCRIPTION,
+    menuButtonText: stored.menuButtonText || process.env.BOT_MENU_BUTTON_TEXT,
+    menuButtonUrl: process.env.BOT_MENU_BUTTON_URL || (process.env.PUBLIC_URL ? process.env.PUBLIC_URL + "/" : "") || stored.menuButtonUrl,
+    commands: stored.commands
+  });
 }
 
 
@@ -1748,6 +1755,71 @@ async function handleTemplateCallback(cq) {
 // Пользователи, ожидающие ответа поддержки. Автоматически истекает через 10 минут.
 const supportMode = new Map(); // chatId → timestamp
 
+const userBotStates = new Map(); // chatId -> state
+
+async function handleBotText(msg, chatId) {
+  const state = userBotStates.get(chatId);
+  if (!state) return false;
+  
+  const text = msg.text.trim();
+  if (text.startsWith('/')) {
+    userBotStates.delete(chatId);
+    await tgCall("sendMessage", { chat_id: chatId, text: "Действие отменено." });
+    return false;
+  }
+
+  if (state.step === "counterparty") {
+    let cp = text.startsWith("@") ? text : "@" + text;
+    state.counterparty = cp;
+    state.step = "title";
+    await tgCall("sendMessage", { chat_id: chatId, text: "Введите краткое название предмета сделки (например: Telegram-канал):" });
+    return true;
+  }
+
+  if (state.step === "title") {
+    state.title = text;
+    state.step = "terms";
+    await tgCall("sendMessage", { chat_id: chatId, text: "Опишите условия сделки (что передается, сроки):" });
+    return true;
+  }
+
+  if (state.step === "terms") {
+    state.terms = text;
+    state.step = "amount";
+    await tgCall("sendMessage", { chat_id: chatId, text: "Введите сумму сделки (только число, например 150):" });
+    return true;
+  }
+
+  if (state.step === "amount") {
+    const amount = parseFloat(text.replace(',', '.'));
+    if (isNaN(amount) || amount <= 0) {
+      await tgCall("sendMessage", { chat_id: chatId, text: "Пожалуйста, введите корректное число больше нуля:" });
+      return true;
+    }
+    state.amount = amount;
+    state.step = "currency";
+    await tgCall("sendMessage", {
+      chat_id: chatId,
+      text: "Выберите валюту:",
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: "USDT", callback_data: "bot_cur_USDT" },
+            { text: "TON", callback_data: "bot_cur_TON" }
+          ],
+          [
+            { text: "BTC", callback_data: "bot_cur_BTC" },
+            { text: "RUB", callback_data: "bot_cur_RUB" }
+          ]
+        ]
+      }
+    });
+    return true;
+  }
+
+  return false;
+}
+
 function enterSupportMode(chatId) {
   supportMode.set(chatId, Date.now());
 }
@@ -1895,7 +1967,7 @@ async function handleUpdate(upd) {
     return;
   }
   if (upd.callback_query) {
-    await handleTemplateCallback(upd.callback_query);
+    await handleCallbackQuery(upd.callback_query);
     return;
   }
   if (!msg) return;
@@ -1905,6 +1977,11 @@ async function handleUpdate(upd) {
   }
   if (!msg.text) return;
   const chatId = msg.chat.id;
+  
+  if (await handleBotText(msg, chatId)) {
+    return; // Handled by state machine
+  }
+
   const isAdmin = isAdminCheck(msg.from);
   let cmd = msg.text.trim().split(/[\s@]/)[0];
   if (cmd === "/start" && msg.text.includes("admin")) {
@@ -1921,6 +1998,18 @@ async function handleUpdate(upd) {
         menu_button: { type: "web_app", text: "CRB GA", web_app: { url: PUBLIC_URL + "/" } }
       });
     }
+    
+    const kb = [
+      [
+        { text: "🆕 Новая сделка", callback_data: "bot_new_deal" },
+        { text: "📁 Мои сделки", callback_data: "bot_my_deals" }
+      ],
+      [{ text: "👨‍💻 Поддержка", callback_data: "bot_support" }]
+    ];
+    if (PUBLIC_URL) {
+      kb.push([{ text: "📱 Открыть Mini App", web_app: { url: PUBLIC_URL + "/" } }]);
+    }
+
     await tgCall("sendMessage", {
       chat_id: chatId,
       text:
@@ -1928,7 +2017,7 @@ async function handleUpdate(upd) {
         "Средства покупателя блокируются у гаранта и выплачиваются продавцу после " +
         "подтверждения приёмки. Оплата: xRocket, Bitpapa, PGon, NicePay, RuKassa." +
         (isAdmin ? "\n\nВам доступно админ-меню: /admin" : ""),
-      reply_markup: appButton("Открыть CRB GA")
+      reply_markup: { inline_keyboard: kb }
     });
   } else if (cmd === "/admin") {
     if (!isAdmin) {
@@ -2009,6 +2098,165 @@ async function handleUpdate(upd) {
       text: "Ваш вопрос передан гаранту. Ожидайте ответа здесь."
     });
   }
+}
+
+async function handleCallbackQuery(cq) {
+  const data = String(cq.data || "");
+  const chatId = cq.message ? cq.message.chat.id : null;
+  const fromId = cq.from.id;
+
+  if (data.startsWith("tpl:")) {
+    return handleTemplateCallback(cq);
+  }
+  
+  if (data === "bot_support" && chatId) {
+    enterSupportMode(chatId);
+    await tgCall("sendMessage", { chat_id: chatId, text: "Опишите ваш вопрос одним сообщением — гарант ответит вам здесь." });
+    await tgCall("answerCallbackQuery", { callback_query_id: cq.id });
+    return;
+  }
+
+  if (!chatId) return tgCall("answerCallbackQuery", { callback_query_id: cq.id });
+
+  if (data === "bot_new_deal") {
+    userBotStates.set(chatId, { ownerId: fromId, step: "role" });
+    await tgCall("sendMessage", {
+      chat_id: chatId,
+      text: "Выберите вашу роль в новой сделке:",
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: "Я Продавец", callback_data: "bot_role_seller" }],
+          [{ text: "Я Покупатель", callback_data: "bot_role_buyer" }]
+        ]
+      }
+    });
+    await tgCall("answerCallbackQuery", { callback_query_id: cq.id });
+    return;
+  }
+
+  if (data === "bot_my_deals") {
+    const uname = cq.from.username ? "@" + cq.from.username.toLowerCase() : null;
+    const myDeals = deals.filter(d => 
+      d.ownerId === fromId || (uname && String(d.counterparty || "").toLowerCase() === uname)
+    ).slice(-10); // Show last 10
+    
+    if (myDeals.length === 0) {
+      await tgCall("answerCallbackQuery", { callback_query_id: cq.id, text: "У вас пока нет сделок.", show_alert: true });
+      return;
+    }
+    
+    const kb = myDeals.map(d => {
+      const st = (d.status === "new" ? "🟡" : d.status === "paid" ? "🟢" : d.status === "dispute" ? "🔴" : "⚪");
+      return [{ text: `${st} ${d.id} | ${d.amount} ${d.currency}`, callback_data: `bot_deal_${d.id}` }];
+    });
+    
+    await tgCall("sendMessage", { chat_id: chatId, text: "Ваши последние сделки:", reply_markup: { inline_keyboard: kb } });
+    await tgCall("answerCallbackQuery", { callback_query_id: cq.id });
+    return;
+  }
+
+  if (data.startsWith("bot_role_")) {
+    const state = userBotStates.get(chatId);
+    if (!state || state.step !== "role") return tgCall("answerCallbackQuery", { callback_query_id: cq.id });
+    state.role = data.replace("bot_role_", "");
+    state.step = "counterparty";
+    await tgCall("sendMessage", { chat_id: chatId, text: "Введите username второго участника (с @):" });
+    await tgCall("answerCallbackQuery", { callback_query_id: cq.id });
+    return;
+  }
+
+  if (data.startsWith("bot_cur_")) {
+    const state = userBotStates.get(chatId);
+    if (!state || state.step !== "currency") return tgCall("answerCallbackQuery", { callback_query_id: cq.id });
+    state.currency = data.replace("bot_cur_", "");
+    state.step = "confirm";
+    const roleLabel = state.role === "seller" ? "Продавец" : "Покупатель";
+    await tgCall("sendMessage", {
+      chat_id: chatId,
+      text: `<b>Подтверждение сделки:</b>\nРоль: ${roleLabel}\nКонтрагент: ${state.counterparty}\nПредмет: ${state.title}\nУсловия: ${state.terms}\nСумма: ${state.amount} ${state.currency}\n\nВсё верно?`,
+      parse_mode: "HTML",
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: "✅ Создать сделку", callback_data: "bot_confirm_yes" }],
+          [{ text: "❌ Отмена", callback_data: "bot_confirm_no" }]
+        ]
+      }
+    });
+    await tgCall("answerCallbackQuery", { callback_query_id: cq.id });
+    return;
+  }
+
+  if (data === "bot_confirm_yes") {
+    const state = userBotStates.get(chatId);
+    if (!state || state.step !== "confirm") return tgCall("answerCallbackQuery", { callback_query_id: cq.id });
+    
+    const crypto = require("crypto");
+    const deal = {
+      id: "CRB-" + crypto.randomBytes(4).toString("hex").toUpperCase(),
+      ownerId: state.ownerId,
+      role: state.role,
+      counterparty: state.counterparty,
+      title: state.title,
+      amount: parseFloat(state.amount),
+      currency: state.currency,
+      terms: state.terms,
+      feePercent: 5,
+      status: "new",
+      createdAt: new Date().toISOString()
+    };
+    deal.fee = deal.amount * (deal.feePercent / 100);
+    deal.total = deal.amount + deal.fee;
+    deals.push(deal);
+    persist();
+    userBotStates.delete(chatId);
+    
+    let kb = [];
+    if (PUBLIC_URL) {
+      kb.push([{ text: "📱 Открыть сделку", web_app: { url: PUBLIC_URL + "/" } }]);
+    }
+    
+    await tgCall("sendMessage", {
+      chat_id: chatId,
+      text: `🎉 Сделка ${deal.id} успешно создана!\nДля управления сделкой и оплаты перейдите в Mini App.`,
+      reply_markup: kb.length ? { inline_keyboard: kb } : undefined
+    });
+    
+    // Notify counterparty
+    const unameStr = String(deal.counterparty).replace('@','').toLowerCase();
+    for (const [userId, userInfo] of userStore.entries()) {
+      if (userInfo.username && userInfo.username.toLowerCase() === unameStr) {
+        await tgCall("sendMessage", {
+          chat_id: userInfo.chatId || userId,
+          text: `🔔 Вам предложена новая сделка ${deal.id} на сумму ${deal.amount} ${deal.currency}.\nРоль контрагента: ${deal.role === 'seller' ? 'Продавец' : 'Покупатель'}.\nОткройте приложение для просмотра.`,
+          reply_markup: kb.length ? { inline_keyboard: kb } : undefined
+        }).catch(() => {});
+      }
+    }
+    
+    await tgCall("answerCallbackQuery", { callback_query_id: cq.id });
+    return;
+  }
+
+  if (data === "bot_confirm_no") {
+    userBotStates.delete(chatId);
+    await tgCall("sendMessage", { chat_id: chatId, text: "Создание сделки отменено." });
+    await tgCall("answerCallbackQuery", { callback_query_id: cq.id });
+    return;
+  }
+
+  if (data.startsWith("bot_deal_")) {
+    const dealId = data.replace("bot_deal_", "");
+    const deal = findDeal(dealId);
+    if (!deal) {
+      await tgCall("answerCallbackQuery", { callback_query_id: cq.id, text: "Сделка не найдена", show_alert: true });
+      return;
+    }
+    await sendDealSummary(chatId, deal, cq.from, true);
+    await tgCall("answerCallbackQuery", { callback_query_id: cq.id });
+    return;
+  }
+
+  await tgCall("answerCallbackQuery", { callback_query_id: cq.id });
 }
 
 // Long polling: не требует публичного URL и переживает смену туннеля
