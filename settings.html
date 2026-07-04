@@ -887,20 +887,10 @@
       return headers;
     }
 
-    function getAuthQuery() {
-      try {
-        var tg = window.Telegram && window.Telegram.WebApp;
-        if (tg && tg.initData) {
-          return '?initDataB64=' + encodeURIComponent(toBase64UrlUtf8(tg.initData));
-        }
-      } catch (_) {}
-      var token = getStoredAuthToken();
-      if (token) {
-        return '?auth=' + encodeURIComponent(toBase64UrlUtf8(token));
-      }
-      return '';
-    }
-
+    // Сохраняем все поля Login Widget, включая auth_date и hash: без них
+    // сервер не сможет проверить подпись (иначе /api/auth/telegram → 401).
+    // Ключи с undefined отбрасываются JSON.stringify, поэтому data_check_string
+    // на сервере совпадает с исходным набором полей виджета.
     function encodeTelegramUser(widgetUser) {
       var safe = widgetUser || {};
       return {
@@ -908,7 +898,9 @@
         first_name: safe.first_name,
         last_name: safe.last_name,
         username: safe.username,
-        photo_url: safe.photo_url
+        photo_url: safe.photo_url,
+        auth_date: safe.auth_date,
+        hash: safe.hash
       };
     }
 
@@ -926,7 +918,7 @@
     }
 
     async function saveEnv(changes) {
-      const resp = await fetch(getApiBase() + '/api/admin/env' + getAuthQuery(), {
+      const resp = await fetch(getApiBase() + '/api/admin/env', {
         method: 'POST',
         headers: getAuthHeaders(),
         body: JSON.stringify(changes)
@@ -975,8 +967,24 @@
      *  RENDER FORM
      * ============================================ */
 
+    // Backend отдаёт { env: { KEY: { value, masked, configured } } } —
+    // распаковываем в плоскую карту key -> { value:string, configured:bool }.
+    function normalizeEnv(data) {
+      var src = (data && data.env) ? data.env : (data || {});
+      var out = {};
+      Object.keys(src).forEach(function(k) {
+        var e = src[k];
+        if (e && typeof e === 'object') {
+          out[k] = { value: e.value != null ? String(e.value) : '', configured: !!e.configured };
+        } else {
+          out[k] = { value: e != null ? String(e) : '', configured: !!e };
+        }
+      });
+      return out;
+    }
+
     function renderForm(data) {
-      serverValues = data || {};
+      serverValues = normalizeEnv(data);
       const form = document.getElementById('settings-form');
       form.innerHTML = '';
 
@@ -991,8 +999,9 @@
           '</div><div class="s-section-grid">';
 
         section.fields.forEach(function(field) {
-          const val = serverValues[field.key] || '';
-          const isSet = !!val;
+          const entry = serverValues[field.key] || {};
+          const val = entry.value || '';
+          const isSet = entry.configured !== undefined ? entry.configured : !!val;
           const isPassword = field.type === 'password';
           const inputType = isPassword ? 'password' : field.type;
           const cssExtra = isPassword ? ' s-input--password' : '';
@@ -1078,7 +1087,8 @@
       Object.keys(inputElements).forEach(function(key) {
         var inp = inputElements[key];
         var val = inp.value.trim();
-        if (val && val !== (serverValues[key] || '')) {
+        var current = (serverValues[key] && serverValues[key].value) || '';
+        if (val && val !== current) {
           changes[key] = val;
         }
       });
@@ -1187,18 +1197,14 @@
           fetch(getApiBase() + '/api/auth/telegram', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              id: payload.id,
-              first_name: payload.first_name,
-              last_name: payload.last_name,
-              username: payload.username,
-              photo_url: payload.photo_url
-            })
+            body: JSON.stringify(payload)
           })
           .then(function (r) { return r.json(); })
           .then(function (res) {
             if (res && res.token) {
-              localStorage.setItem('northcat_auth_v1', res.token);
+              // app.js хранит под этим ключом JSON {user, token} — сохраняем так же,
+              // чтобы сессия была общей между Mini App и страницей настроек.
+              localStorage.setItem('northcat_auth_v1', JSON.stringify({ user: res.user, token: res.token }));
               document.getElementById('auth-overlay').style.display = 'none';
               document.getElementById('skeleton').style.display = 'block';
               init();

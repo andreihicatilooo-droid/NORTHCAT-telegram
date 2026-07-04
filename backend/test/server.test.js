@@ -11,7 +11,9 @@ const os = require("os");
 const path = require("path");
 const { once } = require("node:events");
 
-// Изолируем данные и включаем production-режим (без локального админ-обхода)
+// Изолируем данные и включаем production-режим (без локального админ-обхода).
+// SKIP_DOTENV не даёт локальному backend/.env с реальными ключами протечь в тесты.
+process.env.SKIP_DOTENV = "1";
 const BOT_TOKEN = "12345678:TEST-TOKEN-abcdefghijklmnop";
 process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "crb-test-"));
 process.env.BOT_TOKEN = BOT_TOKEN;

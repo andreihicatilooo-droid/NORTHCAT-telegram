@@ -30,12 +30,27 @@ if [ ! -d "./backend/node_modules" ]; then
   cd backend && npm install && cd ..
 fi
 
-# 3. Освобождение порта
-PID=$(lsof -t -i:$PORT)
-if [ ! -z "$PID" ]; then
-  echo -e "${YELLOW}Порт $PORT занят процессом (PID: $PID). Освобождаем...${NC}"
-  kill -9 $PID
-  sleep 1
+# 3. Освобождение порта (если доступен lsof).
+# Сначала пробуем корректный TERM, и лишь затем KILL. Каждый PID обрабатываем
+# отдельно, чтобы несколько результатов lsof не привели к неожиданным убийствам,
+# и не падаем, если lsof недоступен или порт уже свободен.
+if command -v lsof >/dev/null 2>&1; then
+  PIDS=$(lsof -t -i:"$PORT" 2>/dev/null)
+  if [ -n "$PIDS" ]; then
+    echo -e "${YELLOW}Порт $PORT занят (PID: $PIDS). Освобождаем...${NC}"
+    for pid in $PIDS; do
+      kill "$pid" 2>/dev/null || true
+    done
+    sleep 1
+    # Если процесс не завершился штатно — принудительно
+    for pid in $PIDS; do
+      if kill -0 "$pid" 2>/dev/null; then
+        kill -9 "$pid" 2>/dev/null || true
+      fi
+    done
+  fi
+else
+  echo -e "${YELLOW}lsof недоступен — пропускаем освобождение порта $PORT.${NC}"
 fi
 
 # 4. Запуск бэкенда в фоновом режиме с записью логов в backend/server.log

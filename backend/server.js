@@ -23,6 +23,9 @@ loadEnvFiles([
 ]);
 
 function loadEnvFiles(files) {
+  // Тесты выставляют SKIP_DOTENV=1, чтобы локальный backend/.env с реальными
+  // ключами не протекал в изолированное тестовое окружение.
+  if (process.env.SKIP_DOTENV) return;
   for (const file of files) {
     try {
       applyEnvFile(fs.readFileSync(file, "utf8"));
@@ -125,8 +128,8 @@ function normalizeBotProfile(profile) {
 // Конфиг перечитывается из process.env, чтобы правки через админ-панель
 // (/api/admin/env) вступали в силу без перезапуска процесса.
 let XROCKET_API_KEY, XROCKET_API_URL, PUBLIC_URL, FEE_PERCENT;
-let PGON_API_URL, PGON_API_KEY, NICEPAY_MERCHANT_ID, NICEPAY_SECRET;
-let RUKASSA_SHOP_ID, RUKASSA_TOKEN, WEBHOOK_SECRET, BITPAPA_API_TOKEN;
+let PGON_API_URL, PGON_API_KEY, NICEPAY_MERCHANT_ID, NICEPAY_SECRET, NICEPAY_API_URL;
+let RUKASSA_SHOP_ID, RUKASSA_TOKEN, RUKASSA_API_URL, WEBHOOK_SECRET, BITPAPA_API_TOKEN;
 let ADMIN_IDS;
 
 function applyConfigFromEnv() {
@@ -141,8 +144,10 @@ function applyConfigFromEnv() {
   PGON_API_KEY = process.env.PGON_API_KEY || "";
   NICEPAY_MERCHANT_ID = process.env.NICEPAY_MERCHANT_ID || "";
   NICEPAY_SECRET = process.env.NICEPAY_SECRET || "";
+  NICEPAY_API_URL = (process.env.NICEPAY_API_URL || "https://nicepay.io").replace(/\/+$/, "");
   RUKASSA_SHOP_ID = process.env.RUKASSA_SHOP_ID || "";
   RUKASSA_TOKEN = process.env.RUKASSA_TOKEN || "";
+  RUKASSA_API_URL = (process.env.RUKASSA_API_URL || "https://lk.rukassa.pro").replace(/\/+$/, "");
 
   // Секрет, который добавляется query-параметром к URL вебхуков шлюзов
   // (укажите его при настройке webhook в кабинете шлюза: /webhook/rukassa?secret=...)
@@ -428,7 +433,9 @@ function validateWidgetAuth(data) {
     .join("\n");
   const secretKey = crypto.createHash("sha256").update(botToken).digest();
   const expected = crypto.createHmac("sha256", secretKey).update(dataCheckString).digest("hex");
-  if (expected !== hash) return null;
+  const received = String(hash);
+  if (expected.length !== received.length ||
+      !crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(received))) return null;
   // Данные не старше суток
   if (Math.floor(Date.now() / 1000) - Number(fields.auth_date || 0) > 86400) return null;
   return fields;
@@ -467,8 +474,10 @@ function validateToken(token) {
 }
 
 function auth(req, res, next) {
-  const encodedInitData = req.header("X-Telegram-Init-Data-B64") || req.query.initDataB64;
-  let initData = req.header("X-Telegram-Init-Data") || req.query.initData || "";
+  // Данные авторизации принимаем только через заголовки: query-параметры
+  // утекают в логи, Referer и историю браузера (особенно опасно при CORS "*").
+  const encodedInitData = req.header("X-Telegram-Init-Data-B64");
+  let initData = req.header("X-Telegram-Init-Data") || "";
   if (!initData && encodedInitData) {
     try {
       initData = Buffer.from(String(encodedInitData), "base64url").toString("utf8");
@@ -476,20 +485,9 @@ function auth(req, res, next) {
       initData = "";
     }
   }
-  // ?auth= несёт base64url либо initData, либо токен сессии — пробуем оба
-  let queryAuth = "";
-  if (req.query.auth) {
-    try {
-      queryAuth = Buffer.from(String(req.query.auth), "base64url").toString("utf8");
-    } catch (e) {
-      queryAuth = "";
-    }
-  }
   const user =
     validateInitData(initData) ||
-    validateInitData(queryAuth) ||
-    validateToken(req.header("X-Auth-Token")) ||
-    validateToken(queryAuth);
+    validateToken(req.header("X-Auth-Token"));
   if (!user) {
     return res.status(401).json({ error: "Требуется авторизация через Telegram" });
   }
@@ -549,8 +547,9 @@ function verifyXRocketSignature(rawBody, signature) {
 /* ---------- Счета: платёжные шлюзы ---------- */
 
 /**
- * RuKassa — https://lk.rukassa.pro (раздел API).
- * Создание платежа: POST /api/v1/create, ответ содержит url на страницу оплаты.
+ * RuKassa — база настраивается через RUKASSA_API_URL
+ * (по умолчанию https://lk.rukassa.pro; для lk.rukassa.io укажите его в .env).
+ * Создание платежа: POST {base}/api/v1/create, ответ содержит url страницы оплаты.
  * Сверьте поля с актуальной документацией вашего кабинета.
  */
 async function createRukassaInvoice(deal) {
@@ -563,7 +562,7 @@ async function createRukassaInvoice(deal) {
     currency: deal.currency,
     data: JSON.stringify({ deal: deal.id })
   });
-  const res = await fetch("https://lk.rukassa.pro/api/v1/create", {
+  const res = await fetch(RUKASSA_API_URL + "/api/v1/create", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: form
@@ -580,7 +579,7 @@ async function createRukassaInvoice(deal) {
  */
 async function createNicepayInvoice(deal) {
   if (!NICEPAY_MERCHANT_ID || !NICEPAY_SECRET) throw new Error("NicePay не настроен");
-  const res = await fetch("https://nicepay.io/public/api/payment", {
+  const res = await fetch(NICEPAY_API_URL + "/public/api/payment", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -1324,8 +1323,8 @@ const ENV_KEYS = [
   "ADMIN_IDS", "ADMIN_GROUP_ID",
   "XROCKET_API_KEY", "XROCKET_API_URL",
   "PGON_API_URL", "PGON_API_KEY",
-  "NICEPAY_MERCHANT_ID", "NICEPAY_SECRET",
-  "RUKASSA_SHOP_ID", "RUKASSA_TOKEN",
+  "NICEPAY_MERCHANT_ID", "NICEPAY_SECRET", "NICEPAY_API_URL",
+  "RUKASSA_SHOP_ID", "RUKASSA_TOKEN", "RUKASSA_API_URL",
   "BITPAPA_API_TOKEN",
   "WEBHOOK_SECRET", "PUBLIC_URL",
   "FEE_PERCENT", "PORT"
