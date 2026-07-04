@@ -858,12 +858,29 @@
       }
     }
 
+    // app.js хранит под этим ключом JSON {user, token} — достаём именно токен
+    function getStoredAuthToken() {
+      var raw = '';
+      try {
+        raw = localStorage.getItem('northcat_auth_v1') || '';
+        if (!raw) return '';
+        var parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object') return parsed.token || '';
+      } catch (_) {
+        return raw;
+      }
+      return raw;
+    }
+
     function getAuthHeaders() {
       const headers = { 'Content-Type': 'application/json' };
       try {
         const tg = window.Telegram && window.Telegram.WebApp;
+        if (tg && tg.initData) {
+          headers['X-Telegram-Init-Data'] = tg.initData;
+        }
       } catch (_) {}
-      const token = localStorage.getItem('northcat_auth_v1');
+      const token = getStoredAuthToken();
       if (token) {
         headers['X-Auth-Token'] = token;
       }
@@ -877,7 +894,7 @@
           return '?initDataB64=' + encodeURIComponent(toBase64UrlUtf8(tg.initData));
         }
       } catch (_) {}
-      var token = localStorage.getItem('northcat_auth_v1');
+      var token = getStoredAuthToken();
       if (token) {
         return '?auth=' + encodeURIComponent(toBase64UrlUtf8(token));
       }

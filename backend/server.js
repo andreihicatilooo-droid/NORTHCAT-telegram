@@ -122,34 +122,58 @@ function normalizeBotProfile(profile) {
   };
 }
 
-const XROCKET_API_KEY = process.env.XROCKET_API_KEY || "";
-const XROCKET_API_URL = (process.env.XROCKET_API_URL || "https://pay.xrocket.tg").replace(/\/+$/, "");
-const PUBLIC_URL = (process.env.PUBLIC_URL || "").replace(/\/+$/, "");
-const FEE_PERCENT = parseFloat(process.env.FEE_PERCENT || "5");
+// Конфиг перечитывается из process.env, чтобы правки через админ-панель
+// (/api/admin/env) вступали в силу без перезапуска процесса.
+let XROCKET_API_KEY, XROCKET_API_URL, PUBLIC_URL, FEE_PERCENT;
+let PGON_API_URL, PGON_API_KEY, NICEPAY_MERCHANT_ID, NICEPAY_SECRET;
+let RUKASSA_SHOP_ID, RUKASSA_TOKEN, WEBHOOK_SECRET, BITPAPA_API_TOKEN;
+let ADMIN_IDS;
+
+function applyConfigFromEnv() {
+  XROCKET_API_KEY = process.env.XROCKET_API_KEY || "";
+  XROCKET_API_URL = (process.env.XROCKET_API_URL || "https://pay.xrocket.tg").replace(/\/+$/, "");
+  PUBLIC_URL = (process.env.PUBLIC_URL || "").replace(/\/+$/, "");
+  const fee = parseFloat(process.env.FEE_PERCENT || "5");
+  FEE_PERCENT = Number.isFinite(fee) && fee >= 0 && fee < 100 ? fee : 5;
+
+  // Платёжные шлюзы
+  PGON_API_URL = (process.env.PGON_API_URL || "").replace(/\/+$/, "");
+  PGON_API_KEY = process.env.PGON_API_KEY || "";
+  NICEPAY_MERCHANT_ID = process.env.NICEPAY_MERCHANT_ID || "";
+  NICEPAY_SECRET = process.env.NICEPAY_SECRET || "";
+  RUKASSA_SHOP_ID = process.env.RUKASSA_SHOP_ID || "";
+  RUKASSA_TOKEN = process.env.RUKASSA_TOKEN || "";
+
+  // Секрет, который добавляется query-параметром к URL вебхуков шлюзов
+  // (укажите его при настройке webhook в кабинете шлюза: /webhook/rukassa?secret=...)
+  WEBHOOK_SECRET = normalizedSecret(process.env.WEBHOOK_SECRET);
+
+  // Токен API Bitpapa для автопроверки входящих переводов
+  BITPAPA_API_TOKEN = process.env.BITPAPA_API_TOKEN || "";
+
+  ADMIN_IDS = (process.env.ADMIN_IDS || "")
+    .split(",")
+    .map((s) => parseInt(s.trim(), 10))
+    .filter(Boolean);
+}
+applyConfigFromEnv();
+
 const PORT = parseInt(process.env.PORT || "3000", 10);
-
-// Платёжные шлюзы
-const PGON_API_URL = (process.env.PGON_API_URL || "").replace(/\/+$/, "");
-const PGON_API_KEY = process.env.PGON_API_KEY || "";
-const NICEPAY_MERCHANT_ID = process.env.NICEPAY_MERCHANT_ID || "";
-const NICEPAY_SECRET = process.env.NICEPAY_SECRET || "";
-const RUKASSA_SHOP_ID = process.env.RUKASSA_SHOP_ID || "";
-const RUKASSA_TOKEN = process.env.RUKASSA_TOKEN || "";
-
-// Секрет, который добавляется query-параметром к URL вебхуков шлюзов
-// (укажите его при настройке webhook в кабинете шлюза: /webhook/rukassa?secret=...)
-const WEBHOOK_SECRET = normalizedSecret(process.env.WEBHOOK_SECRET);
-
-// Токен API Bitpapa для автопроверки входящих переводов
-const BITPAPA_API_TOKEN = process.env.BITPAPA_API_TOKEN || "";
-
-const ADMIN_IDS = (process.env.ADMIN_IDS || "")
-  .split(",")
-  .map((s) => parseInt(s.trim(), 10))
-  .filter(Boolean);
 const ADMIN_GROUP_ID = parseInt(process.env.ADMIN_GROUP_ID || "", 10);
+const IS_PRODUCTION = process.env.NODE_ENV === "production";
 
-const RUNTIME_SETTINGS_FILE = path.join(__dirname, "runtime_settings.json");
+// Максимальный возраст initData Mini App (защита от повторного использования)
+const INITDATA_MAX_AGE_SECONDS = parseInt(process.env.INITDATA_MAX_AGE || "86400", 10);
+
+// Локальный админ-доступ без авторизации (для разработки). В production
+// выключен по умолчанию; включается только явным LOCAL_ADMIN=1.
+const LOCAL_ADMIN_ENABLED = process.env.LOCAL_ADMIN === "1" ||
+  (process.env.LOCAL_ADMIN !== "0" && !IS_PRODUCTION);
+
+// Каталог данных (deals.json и т.п.) — вынесите на постоянный том в проде
+const DATA_DIR = process.env.DATA_DIR || __dirname;
+
+const RUNTIME_SETTINGS_FILE = path.join(DATA_DIR, "runtime_settings.json");
 const DEFAULT_BOT_TOKEN = normalizedSecret(process.env.BOT_TOKEN);
 const DEFAULT_BOT_PROFILE = normalizeBotProfile({
   name: process.env.BOT_NAME,
@@ -180,6 +204,17 @@ try {
   // ignore missing runtime settings
 }
 
+// Атомарная запись: tmp-файл + rename, чтобы не потерять данные при падении
+function writeFileAtomic(file, content) {
+  const tmp = file + "." + process.pid + ".tmp";
+  fs.writeFileSync(tmp, content);
+  fs.renameSync(tmp, file);
+}
+
+function writeJsonAtomic(file, data) {
+  writeFileAtomic(file, JSON.stringify(data, null, 2));
+}
+
 function persistRuntimeSettings() {
   try {
     if (!runtimeSettings.botToken) {
@@ -191,7 +226,7 @@ function persistRuntimeSettings() {
       botProfile: normalizeBotProfile(runtimeSettings.botProfile),
       updatedAt: runtimeSettings.updatedAt || Date.now()
     };
-    fs.writeFileSync(RUNTIME_SETTINGS_FILE, JSON.stringify(payload, null, 2));
+    writeJsonAtomic(RUNTIME_SETTINGS_FILE, payload);
   } catch (e) {
     console.error("[admin] Не удалось сохранить runtime_settings:", e.message);
   }
@@ -208,8 +243,8 @@ function getBotProfile() {
 
 
 
-const DB_FILE = path.join(__dirname, "deals.json");
-const ADMIN_GROUP_FILE = path.join(__dirname, "admin_group.json");
+const DB_FILE = path.join(DATA_DIR, "deals.json");
+const ADMIN_GROUP_FILE = path.join(DATA_DIR, "admin_group.json");
 
 /* ---------- Хранилище ---------- */
 
@@ -221,7 +256,11 @@ try {
 }
 
 function persist() {
-  fs.writeFileSync(DB_FILE, JSON.stringify(deals, null, 2));
+  try {
+    writeJsonAtomic(DB_FILE, deals);
+  } catch (e) {
+    console.error("[db] Не удалось сохранить deals.json:", e.message);
+  }
 }
 
 function findDeal(id) {
@@ -272,7 +311,7 @@ function persistAdminGroup() {
       if (fs.existsSync(ADMIN_GROUP_FILE)) fs.unlinkSync(ADMIN_GROUP_FILE);
       return;
     }
-    fs.writeFileSync(ADMIN_GROUP_FILE, JSON.stringify(adminGroup, null, 2));
+    writeJsonAtomic(ADMIN_GROUP_FILE, adminGroup);
   } catch (e) {
     console.error("[bot] Не удалось сохранить admin_group:", e.message);
   }
@@ -308,7 +347,7 @@ function adminGroupLabel() {
 
 /* ---------- Хранилище chat_id пользователей ---------- */
 
-const USER_CHATS_FILE = path.join(__dirname, "user_chats.json");
+const USER_CHATS_FILE = path.join(DATA_DIR, "user_chats.json");
 let userChats = {};
 try {
   userChats = JSON.parse(fs.readFileSync(USER_CHATS_FILE, "utf8"));
@@ -317,7 +356,7 @@ try {
 }
 
 function persistChats() {
-  try { fs.writeFileSync(USER_CHATS_FILE, JSON.stringify(userChats)); } catch (e) {
+  try { writeJsonAtomic(USER_CHATS_FILE, userChats); } catch (e) {
     console.error("[bot] Не удалось сохранить user_chats:", e.message);
   }
 }
@@ -354,10 +393,19 @@ function validateInitData(initData) {
 
   const secretKey = crypto.createHmac("sha256", "WebAppData").update(botToken).digest();
   const expected = crypto.createHmac("sha256", secretKey).update(dataCheckString).digest("hex");
-  if (expected !== hash) return null;
+  if (expected.length !== hash.length ||
+      !crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(hash))) return null;
+
+  // Защита от повторного использования украденного initData
+  const authDate = Number(params.get("auth_date") || 0);
+  if (!Number.isFinite(authDate) ||
+      Math.floor(Date.now() / 1000) - authDate > INITDATA_MAX_AGE_SECONDS) {
+    return null;
+  }
 
   try {
-    return JSON.parse(params.get("user"));
+    const user = JSON.parse(params.get("user"));
+    return user && Number.isFinite(Number(user.id)) ? user : null;
   } catch (e) {
     return null;
   }
@@ -406,7 +454,7 @@ function validateToken(token) {
       !crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(sig))) return null;
   try {
     const user = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
-    if (!user.id || user.exp < Date.now()) return null;
+    if (!user.id || !Number.isFinite(Number(user.exp)) || user.exp < Date.now()) return null;
     return user;
   } catch (e) {
     return null;
@@ -423,17 +471,20 @@ function auth(req, res, next) {
       initData = "";
     }
   }
-  if (!initData && req.query.auth) {
-    const authData = String(req.query.auth || "");
+  // ?auth= несёт base64url либо initData, либо токен сессии — пробуем оба
+  let queryAuth = "";
+  if (req.query.auth) {
     try {
-      initData = Buffer.from(authData, "base64url").toString("utf8");
+      queryAuth = Buffer.from(String(req.query.auth), "base64url").toString("utf8");
     } catch (e) {
-      initData = "";
+      queryAuth = "";
     }
   }
   const user =
     validateInitData(initData) ||
-    validateToken(req.header("X-Auth-Token"));
+    validateInitData(queryAuth) ||
+    validateToken(req.header("X-Auth-Token")) ||
+    validateToken(queryAuth);
   if (!user) {
     return res.status(401).json({ error: "Требуется авторизация через Telegram" });
   }
@@ -615,6 +666,10 @@ async function verifyBitpapaTransfer(deal) {
 
 // Автовыплата продавцу по завершенной сделке через xRocket Pay API
 async function payoutSeller(deal) {
+  if (deal.payoutId) {
+    console.log(`[payout] Сделка ${deal.id}: выплата уже проведена (${deal.payoutId}), пропуск`);
+    return true;
+  }
   const sellerId = deal.role === "seller" ? deal.ownerId : deal.counterpartyId;
   if (!sellerId) {
     console.warn(`[payout] Сделка ${deal.id}: не удалось выплатить продавцу, т.к. его Telegram ID не известен`);
@@ -675,6 +730,10 @@ async function notifyParties(deal, text) {
   const ids = new Set();
   const ownerChat = userChats[String(deal.ownerId)];
   if (ownerChat) ids.add(ownerChat);
+  if (deal.counterpartyId) {
+    const cpChatById = userChats[String(deal.counterpartyId)];
+    if (cpChatById) ids.add(cpChatById);
+  }
   const cp = String(deal.counterparty || "").trim().toLowerCase();
   if (cp.startsWith("@")) {
     const cpChat = userChats[cp];
@@ -725,19 +784,55 @@ let BOT_INFO = null;
 let botLoopStarted = false;
 const app = express();
 
+// За reverse-proxy укажите TRUST_PROXY (например, 1 или loopback),
+// чтобы req.ip отражал реального клиента, а не адрес прокси.
+if (process.env.TRUST_PROXY) {
+  const tp = process.env.TRUST_PROXY;
+  app.set("trust proxy", /^\d+$/.test(tp) ? parseInt(tp, 10) : tp);
+}
+
 // Сырое тело нужно для проверки подписи webhook xRocket
-app.use("/webhook/xrocket", express.raw({ type: "*/*" }));
-app.use(express.json());
-app.use(express.urlencoded({ extended: false }));
+app.use("/webhook/xrocket", express.raw({ type: "*/*", limit: "256kb" }));
+app.use(express.json({ limit: "256kb" }));
+app.use(express.urlencoded({ extended: false, limit: "256kb" }));
 
 // CORS для Mini App (страница может жить на другом домене)
 app.use((req, res, next) => {
   res.set("Access-Control-Allow-Origin", "*");
-  res.set("Access-Control-Allow-Headers", "Content-Type, X-Telegram-Init-Data, X-Auth-Token");
+  res.set("Access-Control-Allow-Headers", "Content-Type, X-Telegram-Init-Data, X-Telegram-Init-Data-B64, X-Auth-Token");
   res.set("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   if (req.method === "OPTIONS") return res.sendStatus(204);
   next();
 });
+
+// Простой rate-limit по IP (RATE_LIMIT_PER_MIN=0 — отключить)
+const RATE_LIMIT_PER_MIN = parseInt(process.env.RATE_LIMIT_PER_MIN || "300", 10);
+const rateBuckets = new Map();
+setInterval(() => {
+  const cutoff = Date.now() - 60000;
+  for (const [key, bucket] of rateBuckets) {
+    if (bucket.start < cutoff) rateBuckets.delete(key);
+  }
+}, 30000).unref();
+
+function rateLimit(req, res, next) {
+  if (!(RATE_LIMIT_PER_MIN > 0)) return next();
+  const key = String(req.ip || req.socket.remoteAddress || "?");
+  const now = Date.now();
+  let bucket = rateBuckets.get(key);
+  if (!bucket || now - bucket.start >= 60000) {
+    bucket = { start: now, count: 0 };
+    rateBuckets.set(key, bucket);
+  }
+  bucket.count += 1;
+  if (bucket.count > RATE_LIMIT_PER_MIN) {
+    return res.status(429).json({ error: "Слишком много запросов, повторите позже" });
+  }
+  next();
+}
+
+app.use("/api", rateLimit);
+app.use("/webhook", rateLimit);
 
 app.get("/api/health", (req, res) => {
   res.json({ ok: true, service: "crb-ga-garant" });
@@ -749,7 +844,13 @@ app.get("/api/me", auth, (req, res) => {
 });
 
 function isLocalRequest(req) {
-  const ip = String(req.ip || req.connection.remoteAddress || "");
+  if (!LOCAL_ADMIN_ENABLED) return false;
+  // Запрос, прошедший через reverse-proxy, локальным не считается:
+  // иначе за nginx на этой же машине каждый внешний запрос выглядел бы как 127.0.0.1.
+  if (req.headers["x-forwarded-for"] || req.headers["x-real-ip"] || req.headers["forwarded"]) {
+    return false;
+  }
+  const ip = String(req.socket.remoteAddress || "");
   return ip === "::1" || ip === "127.0.0.1" || ip === "::ffff:127.0.0.1";
 }
 
@@ -794,6 +895,16 @@ function isParty(deal, user) {
   return false;
 }
 
+// Роль пользователя в сделке: "seller" | "buyer" | null (не участник)
+function partyRole(deal, user) {
+  if (deal.ownerId === user.id) return deal.role;
+  const uname = user.username ? "@" + String(user.username).toLowerCase() : null;
+  const isCounterparty = deal.counterpartyId === user.id ||
+    (uname && String(deal.counterparty || "").toLowerCase() === uname);
+  if (isCounterparty) return deal.role === "seller" ? "buyer" : "seller";
+  return null;
+}
+
 // Сделки текущего пользователя
 app.get("/api/deals", auth, (req, res) => {
   res.json(deals.filter((d) => isParty(d, req.tgUser)));
@@ -804,14 +915,14 @@ const KNOWN_METHODS = ["xrocket", "bitpapa", "pgon", "nicepay", "rukassa"];
 // Создание сделки (сумму и комиссию пересчитываем на сервере — клиенту не доверяем)
 app.post("/api/deals", auth, (req, res) => {
   const b = req.body || {};
-  const amount = parseFloat(b.amount);
-  if (!isFinite(amount) || amount <= 0) {
+  const amount = dealAmount(b.amount);
+  if (!Number.isFinite(amount) || amount <= 0 || amount > 1e9) {
     return res.status(400).json({ error: "Некорректная сумма" });
   }
   if (!b.title || !b.terms || !b.counterparty) {
     return res.status(400).json({ error: "Заполните все поля" });
   }
-  const fee = (amount * FEE_PERCENT) / 100;
+  const fee = dealAmount((amount * FEE_PERCENT) / 100);
   const parsedCounterpartyId = parseInt(b.counterpartyId, 10);
   const counterpartyId = Number.isFinite(parsedCounterpartyId) && parsedCounterpartyId > 0
     ? parsedCounterpartyId
@@ -831,7 +942,7 @@ app.post("/api/deals", auth, (req, res) => {
     method: KNOWN_METHODS.includes(b.method) ? b.method : "xrocket",
     feePercent: FEE_PERCENT,
     fee,
-    total: amount + fee,
+    total: dealAmount(amount + fee),
     status: "new",
     createdAt: Date.now(),
     history: [{ status: "new", ts: Date.now() }]
@@ -860,6 +971,13 @@ const TRANSITIONS = {
   fulfilled: ["completed", "dispute"]
 };
 
+// Кто вправе выполнить переход: исполнение подтверждает продавец,
+// приёмку — только покупатель (иначе продавец сам запускал бы выплату себе).
+const TRANSITION_ROLES = {
+  fulfilled: "seller",
+  completed: "buyer"
+};
+
 app.post("/api/deals/:id/status", auth, (req, res) => {
   const deal = findDeal(req.params.id);
   if (!deal || !isParty(deal, req.tgUser)) {
@@ -868,6 +986,14 @@ app.post("/api/deals/:id/status", auth, (req, res) => {
   const next = req.body && req.body.status;
   if (!(TRANSITIONS[deal.status] || []).includes(next)) {
     return res.status(400).json({ error: `Переход ${deal.status} → ${next} запрещён` });
+  }
+  const requiredRole = TRANSITION_ROLES[next];
+  if (requiredRole && partyRole(deal, req.tgUser) !== requiredRole) {
+    return res.status(403).json({
+      error: requiredRole === "seller"
+        ? "Исполнение условий подтверждает продавец"
+        : "Приёмку подтверждает покупатель"
+    });
   }
   deal.status = next;
   deal.history.push({ status: next, ts: Date.now() });
@@ -898,6 +1024,9 @@ app.post("/api/deals/:id/invoice", auth, async (req, res) => {
   if (!deal || !isParty(deal, req.tgUser)) {
     return res.status(404).json({ error: "Сделка не найдена" });
   }
+  if (partyRole(deal, req.tgUser) !== "buyer") {
+    return res.status(403).json({ error: "Счёт оплачивает покупатель" });
+  }
   const provider = INVOICE_PROVIDERS[deal.method];
   if (deal.status !== "new" || !provider) {
     return res.status(400).json({ error: "Счёт для этой сделки недоступен" });
@@ -918,6 +1047,12 @@ app.post("/api/deals/:id/bitpapa-claim", auth, async (req, res) => {
   const deal = findDeal(req.params.id);
   if (!deal || !isParty(deal, req.tgUser)) {
     return res.status(404).json({ error: "Сделка не найдена" });
+  }
+  if (partyRole(deal, req.tgUser) !== "buyer") {
+    return res.status(403).json({ error: "Об оплате сообщает покупатель" });
+  }
+  if (deal.status !== "new") {
+    return res.status(400).json({ error: "Сделка уже оплачена или закрыта" });
   }
   deal.bitpapaClaimedAt = Date.now();
   if (await verifyBitpapaTransfer(deal)) {
@@ -1330,10 +1465,12 @@ app.post("/api/admin/env", adminRuntimeAccess, async (req, res) => {
     return res.status(500).json({ error: "Не удалось сохранить .env файл" });
   }
 
-  // Обновляем process.env
+  // Обновляем process.env и перечитываем зависящий от него конфиг,
+  // чтобы новые ключи шлюзов/комиссия/ADMIN_IDS применились без рестарта
   for (const [key, val] of Object.entries(updates)) {
     process.env[key] = val;
   }
+  applyConfigFromEnv();
 
   // Перезапуск бота при смене BOT_TOKEN
   if ("BOT_TOKEN" in updates || hasProfileUpdates) {
@@ -1368,6 +1505,11 @@ app.post("/api/admin/deals/:id/resolve", auth, adminOnly, (req, res) => {
   deal.resolvedBy = req.tgUser.id;
   deal.history.push({ status: deal.status, ts: Date.now() });
   persist();
+  if (resolution === "seller") {
+    payoutSeller(deal).catch((err) => {
+      console.error(`[payout] Ошибка при автовыплате по сделке ${deal.id}:`, err);
+    });
+  }
   const resolveText = resolution === "seller"
     ? `✅ <b>Спор по сделке ${deal.id}</b> решён в пользу продавца. Средства выплачены.`
     : `🔄 <b>Спор по сделке ${deal.id}</b> решён в пользу покупателя. Средства возвращены.`;
@@ -1410,6 +1552,10 @@ app.post("/webhook/xrocket", (req, res) => {
   } catch (e) {
     return res.status(400).json({ error: "Некорректное тело" });
   }
+  // Реагируем только на событие оплаты счёта
+  if (event && event.type && event.type !== "invoicePay") {
+    return res.json({ ok: true });
+  }
   const data = event && event.data;
   const dealId = data && (data.payload || (data.invoice && data.invoice.payload));
   const deal = dealId && findDeal(dealId);
@@ -1437,38 +1583,49 @@ function gatewayWebhook(provider) {
     const deal = dealId && findDeal(String(dealId));
     if (!deal) return res.status(404).json({ error: "Сделка не найдена" });
 
-    // Сверка подписи NicePay
+    // Сверка подписи NicePay (при настроенном секрете подпись обязательна)
     if (provider === "nicepay" && NICEPAY_SECRET) {
       const sign = b.signature || b.sign || b.hash;
-      if (sign) {
-        const amountStr = String(b.amount ?? b.sum ?? b.value);
-        const expectedSignMd5 = crypto.createHash("md5")
-          .update(`${NICEPAY_MERCHANT_ID}${NICEPAY_SECRET}${amountStr}${deal.id}`)
-          .digest("hex");
-        const expectedSignSha256 = crypto.createHash("sha256")
-          .update(`${NICEPAY_MERCHANT_ID}${amountStr}${deal.id}${NICEPAY_SECRET}`)
-          .digest("hex");
-        const received = String(sign).toLowerCase();
-        if (received !== expectedSignMd5 && received !== expectedSignSha256) {
-          console.warn(`[nicepay] Неверная подпись вебхука: получено ${received}`);
-          return res.status(401).json({ error: "Неверная подпись NicePay" });
-        }
+      if (!sign) {
+        console.warn(`[nicepay] Вебхук без подписи по сделке ${deal.id}`);
+        return res.status(401).json({ error: "Отсутствует подпись NicePay" });
+      }
+      const amountStr = String(b.amount ?? b.sum ?? b.value);
+      const expectedSignMd5 = crypto.createHash("md5")
+        .update(`${NICEPAY_MERCHANT_ID}${NICEPAY_SECRET}${amountStr}${deal.id}`)
+        .digest("hex");
+      const expectedSignSha256 = crypto.createHash("sha256")
+        .update(`${NICEPAY_MERCHANT_ID}${amountStr}${deal.id}${NICEPAY_SECRET}`)
+        .digest("hex");
+      const received = String(sign).toLowerCase();
+      if (received !== expectedSignMd5 && received !== expectedSignSha256) {
+        console.warn(`[nicepay] Неверная подпись вебхука по сделке ${deal.id}`);
+        return res.status(401).json({ error: "Неверная подпись NicePay" });
       }
     }
 
-    // Сверка подписи RuKassa
+    // Сверка подписи RuKassa (при настроенном токене подпись обязательна)
     if (provider === "rukassa" && RUKASSA_TOKEN) {
       const sign = b.signature || b.sign;
-      if (sign) {
-        const amountStr = String(b.amount ?? b.sum ?? b.value);
-        const expectedSign = crypto.createHash("md5")
-          .update(`${RUKASSA_SHOP_ID}${amountStr}${deal.id}${RUKASSA_TOKEN}`)
-          .digest("hex");
-        if (String(sign).toLowerCase() !== expectedSign) {
-          console.warn(`[rukassa] Неверная подпись вебхука: получено ${sign}`);
-          return res.status(401).json({ error: "Неверная подпись RuKassa" });
-        }
+      if (!sign) {
+        console.warn(`[rukassa] Вебхук без подписи по сделке ${deal.id}`);
+        return res.status(401).json({ error: "Отсутствует подпись RuKassa" });
       }
+      const amountStr = String(b.amount ?? b.sum ?? b.value);
+      const expectedSign = crypto.createHash("md5")
+        .update(`${RUKASSA_SHOP_ID}${amountStr}${deal.id}${RUKASSA_TOKEN}`)
+        .digest("hex");
+      if (String(sign).toLowerCase() !== expectedSign) {
+        console.warn(`[rukassa] Неверная подпись вебхука по сделке ${deal.id}`);
+        return res.status(401).json({ error: "Неверная подпись RuKassa" });
+      }
+    }
+
+    // Сверка валюты (если шлюз её сообщает)
+    const paidCurrency = String(b.currency || b.currency_code || "").trim().toUpperCase();
+    if (paidCurrency && paidCurrency !== String(deal.currency).toUpperCase()) {
+      console.warn(`[${provider}] Сделка ${deal.id}: валюта ${paidCurrency} ≠ ${deal.currency}`);
+      return res.status(400).json({ error: "Валюта платежа не совпадает" });
     }
 
     const paidAmount = parseFloat(b.amount ?? b.sum ?? b.value);
@@ -1533,7 +1690,7 @@ function createDealFromTemplate(template, buyer) {
   if (!Number.isFinite(amount) || amount <= 0) {
     return null;
   }
-  const fee = (amount * FEE_PERCENT) / 100;
+  const fee = dealAmount((amount * FEE_PERCENT) / 100);
   const buyerUsername = buyer.username && String(buyer.username).trim()
     ? `@${String(buyer.username).trim()}`
     : "";
@@ -1551,7 +1708,7 @@ function createDealFromTemplate(template, buyer) {
     method: KNOWN_METHODS.includes(template.method) ? template.method : "xrocket",
     feePercent: FEE_PERCENT,
     fee,
-    total: amount + fee,
+    total: dealAmount(amount + fee),
     status: "new",
     sourceTemplateId: template.id,
     createdAt: Date.now(),
@@ -1662,6 +1819,21 @@ async function handleTemplateCallback(cq) {
     await tgCall("answerCallbackQuery", {
       callback_query_id: cq.id,
       text: "Нельзя принять собственный шаблон.",
+      show_alert: true
+    });
+    return;
+  }
+
+  // Повторное нажатие не плодит дубли: возвращаем уже открытую сделку
+  const existing = deals.find((d) =>
+    d.sourceTemplateId === template.id &&
+    Number(d.counterpartyId) === Number(cq.from.id) &&
+    ["new", "paid", "fulfilled"].includes(d.status)
+  );
+  if (existing) {
+    await tgCall("answerCallbackQuery", {
+      callback_query_id: cq.id,
+      text: `У вас уже есть сделка ${existing.id} по этому объявлению.`,
       show_alert: true
     });
     return;
@@ -1987,15 +2159,64 @@ async function botLoop() {
   }
 }
 
-// Отдаём фронтенд, если он лежит рядом (можно хостить всё одним сервисом)
-app.use(express.static(path.join(__dirname, "..")));
+// Отдаём фронтенд, если он лежит рядом (можно хостить всё одним сервисом).
+// Только allowlist путей: раздача всего корня репозитория открывала бы
+// backend/.env, runtime_settings.json (токен бота), deals.json и .git.
+const FRONTEND_ROOT = path.join(__dirname, "..");
+const PUBLIC_PATH_RE = /^\/(?:$|index\.html$|settings\.html$|favicon\.ico$|css\/|js\/)/;
+const staticHandler = express.static(FRONTEND_ROOT, { index: "index.html", dotfiles: "deny" });
 
-app.listen(PORT, () => {
-  console.log(`CRB GA backend запущен на порту ${PORT}`);
-  if (!getBotToken()) console.warn("⚠️  BOT_TOKEN не задан — авторизация и бот работать не будут");
-  if (!XROCKET_API_KEY) console.warn("⚠️  XROCKET_API_KEY не задан — счета xRocket создаваться не будут");
-  if (!WEBHOOK_SECRET) console.warn("⚠️  WEBHOOK_SECRET не задан — вебхуки шлюзов отключены");
-  if (getBotToken()) {
-    ensureBotRuntime().catch((e) => console.error("[bot] setup:", e.message));
+app.use((req, res, next) => {
+  if (req.method !== "GET" && req.method !== "HEAD") return next();
+  // Проверяем декодированный путь: ".." (в т.ч. как %2e%2e) в пути
+  // не имеет легитимного применения — режем обходы вида /js/../backend/
+  let decodedPath;
+  try {
+    decodedPath = decodeURIComponent(req.path);
+  } catch (e) {
+    return next();
   }
+  if (decodedPath.includes("..") || decodedPath.includes("\\") || decodedPath.includes("\0")) return next();
+  if (!PUBLIC_PATH_RE.test(decodedPath)) return next();
+  return staticHandler(req, res, next);
 });
+
+// Ссылки вида PUBLIC_URL/deal/<id> из счетов ведут на главную Mini App
+app.get("/deal/:id", (req, res) => res.redirect("/"));
+
+function startServer(port = PORT) {
+  const server = app.listen(port, () => {
+    console.log(`CRB GA backend запущен на порту ${port}`);
+    if (!getBotToken()) console.warn("⚠️  BOT_TOKEN не задан — авторизация и бот работать не будут");
+    if (!XROCKET_API_KEY) console.warn("⚠️  XROCKET_API_KEY не задан — счета xRocket создаваться не будут");
+    if (!WEBHOOK_SECRET) console.warn("⚠️  WEBHOOK_SECRET не задан — вебхуки шлюзов отключены");
+    if (LOCAL_ADMIN_ENABLED) console.warn("⚠️  Локальный админ-доступ включён (LOCAL_ADMIN); в production задайте NODE_ENV=production или LOCAL_ADMIN=0");
+    if (getBotToken()) {
+      ensureBotRuntime().catch((e) => console.error("[bot] setup:", e.message));
+    }
+  });
+  return server;
+}
+
+if (require.main === module) {
+  const server = startServer();
+
+  function shutdown(signal) {
+    console.log(`[server] Получен ${signal}, останавливаемся...`);
+    persist();
+    server.close(() => process.exit(0));
+    setTimeout(() => process.exit(0), 5000).unref();
+  }
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
+  process.on("SIGINT", () => shutdown("SIGINT"));
+}
+
+// Экспорт для тестов
+module.exports = {
+  app,
+  startServer,
+  applyConfigFromEnv,
+  validateInitData,
+  validateToken,
+  issueToken
+};

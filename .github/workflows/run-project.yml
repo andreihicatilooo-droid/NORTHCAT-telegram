@@ -29,6 +29,10 @@ jobs:
         working-directory: backend
         run: npm ci
 
+      - name: Run backend tests
+        working-directory: backend
+        run: npm test
+
       - name: Start backend
         env:
           PORT: 3000
