@@ -809,7 +809,7 @@ async function notifyAdminGroup(text, keyboard) {
 // Уведомление уходит в привязанную админ-группу, иначе — каждому админу лично.
 async function notifyAdmins(text, keyboard) {
   if (await notifyAdminGroup(text, keyboard)) return;
-  const markup = keyboard || appButton("Открыть админ-панель");
+  const markup = keyboard || adminAppButton("Открыть админ-панель");
   for (const adminId of ADMIN_IDS) {
     await tgCall("sendMessage", {
       chat_id: adminId,
@@ -1721,6 +1721,11 @@ function appButton(text) {
   return { inline_keyboard: [[{ text, web_app: { url: PUBLIC_URL + "/" } }]] };
 }
 
+function adminAppButton(text) {
+  if (!PUBLIC_URL) return undefined;
+  return { inline_keyboard: [[{ text, web_app: { url: PUBLIC_URL + "/?admin=1" } }]] };
+}
+
 function dealTemplateButtonText(deal) {
   const amountText = formatAmount(deal.amount, deal.currency);
   const reserve = Math.max(0, 64 - amountText.length - 3);
@@ -2257,7 +2262,7 @@ async function handleUpdate(upd) {
         `Споров на арбитраже: ${disputes}\n` +
         `Ожидают подтверждения оплаты: ${awaiting}\n\n` +
         "Подтверждайте оплаты и решайте споры прямо здесь кнопками ниже или во вкладке «Админ» приложения.",
-      reply_markup: appButton("Открыть админ-панель")
+      reply_markup: adminAppButton("Открыть админ-панель")
     });
     await sendPendingAdminItems(chatId);
   } else if (cmd === "/setup") {

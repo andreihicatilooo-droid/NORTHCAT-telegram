@@ -938,23 +938,50 @@
   var adminDeals = [];
   var adminFilter = "pending";
 
+  function openAdminScreen() {
+    var tab = $("admin-tab");
+    if (tab) tab.hidden = false;
+    showScreen("screen-admin");
+    loadAdminDeals();
+  }
+
   function checkAdmin() {
-    // ?admin=1 — быстрый переход к серверным настройкам (ключи API)
-    if (openAdminOnStart) {
+    var insideTelegram = !!(tg && tg.initData);
+    // ?admin=1 в браузере — быстрый переход к серверным настройкам (ключи API)
+    if (openAdminOnStart && !insideTelegram) {
       window.location.href = "settings.html";
       return;
     }
-    // В демо-режиме админки нет; права определяет сервер по ADMIN_IDS
-    if (isDemo()) return;
+    // В демо-режиме права проверить негде: по ?admin=1 открываем панель
+    // с локальными данными, иначе админки нет
+    if (isDemo()) {
+      if (openAdminOnStart) {
+        isAdminUser = true;
+        openAdminScreen();
+      }
+      return;
+    }
     api("GET", "/api/me").then(function (res) {
       isAdminUser = !!(res && res.isAdmin);
       var tab = $("admin-tab");
       if (tab) tab.hidden = !isAdminUser;
+      if (openAdminOnStart && isAdminUser) openAdminScreen();
     }).catch(function () { /* не критично */ });
   }
 
   function loadAdminDeals() {
-    if (!isAdminUser || isDemo()) return;
+    if (!isAdminUser) return;
+    // Демо: показываем локальные сделки, чтобы панель не была пустой
+    if (isDemo()) {
+      try {
+        adminDeals = JSON.parse(localStorage.getItem(STORAGE_DEALS)) || [];
+      } catch (e) {
+        adminDeals = [];
+      }
+      renderAdminStats();
+      renderAdminList();
+      return;
+    }
     api("GET", "/api/admin/deals").then(function (list) {
       adminDeals = Array.isArray(list) ? list : [];
       renderAdminStats();
