@@ -862,16 +862,26 @@
       const headers = { 'Content-Type': 'application/json' };
       try {
         const tg = window.Telegram && window.Telegram.WebApp;
-        if (tg && tg.initData) {
-          headers['X-Telegram-Init-Data-B64'] = toBase64UrlUtf8(tg.initData);
-          return headers;
-        }
       } catch (_) {}
       const token = localStorage.getItem('northcat_auth_v1');
       if (token) {
         headers['X-Auth-Token'] = token;
       }
       return headers;
+    }
+
+    function getAuthQuery() {
+      try {
+        var tg = window.Telegram && window.Telegram.WebApp;
+        if (tg && tg.initData) {
+          return '?initDataB64=' + encodeURIComponent(toBase64UrlUtf8(tg.initData));
+        }
+      } catch (_) {}
+      var token = localStorage.getItem('northcat_auth_v1');
+      if (token) {
+        return '?auth=' + encodeURIComponent(toBase64UrlUtf8(token));
+      }
+      return '';
     }
 
     function encodeTelegramUser(widgetUser) {
@@ -899,7 +909,7 @@
     }
 
     async function saveEnv(changes) {
-      const resp = await fetch(getApiBase() + '/api/admin/env', {
+      const resp = await fetch(getApiBase() + '/api/admin/env' + getAuthQuery(), {
         method: 'POST',
         headers: getAuthHeaders(),
         body: JSON.stringify(changes)

@@ -414,11 +414,19 @@ function validateToken(token) {
 }
 
 function auth(req, res, next) {
-  const encodedInitData = req.header("X-Telegram-Init-Data-B64");
-  let initData = req.header("X-Telegram-Init-Data");
+  const encodedInitData = req.header("X-Telegram-Init-Data-B64") || req.query.initDataB64;
+  let initData = req.header("X-Telegram-Init-Data") || req.query.initData || "";
   if (!initData && encodedInitData) {
     try {
       initData = Buffer.from(String(encodedInitData), "base64url").toString("utf8");
+    } catch (e) {
+      initData = "";
+    }
+  }
+  if (!initData && req.query.auth) {
+    const authData = String(req.query.auth || "");
+    try {
+      initData = Buffer.from(authData, "base64url").toString("utf8");
     } catch (e) {
       initData = "";
     }
