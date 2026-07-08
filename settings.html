@@ -909,19 +909,29 @@
      * ============================================ */
 
     async function fetchEnv() {
+      const ctrl = new AbortController();
+      const timer = setTimeout(function () { ctrl.abort(); }, 10000);
       const resp = await fetch(getApiBase() + '/api/admin/env', {
         method: 'GET',
-        headers: getAuthHeaders()
+        headers: getAuthHeaders(),
+        signal: ctrl.signal
+      }).finally(function () {
+        clearTimeout(timer);
       });
       if (!resp.ok) throw new Error('Ошибка загрузки: ' + resp.status);
       return resp.json();
     }
 
     async function saveEnv(changes) {
+      const ctrl = new AbortController();
+      const timer = setTimeout(function () { ctrl.abort(); }, 12000);
       const resp = await fetch(getApiBase() + '/api/admin/env', {
         method: 'POST',
         headers: getAuthHeaders(),
-        body: JSON.stringify(changes)
+        body: JSON.stringify(changes),
+        signal: ctrl.signal
+      }).finally(function () {
+        clearTimeout(timer);
       });
       if (!resp.ok) {
         const body = await resp.text().catch(() => '');
